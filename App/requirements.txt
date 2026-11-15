@@ -8,6 +8,7 @@ pydantic>=2.7
 
 # timeline
 opentimelineio>=0.17
+otio-fcp-adapter>=1.0   # FCP7 XML — import do Premiere Pro
 
 # analiza obrazu
 opencv-python>=4.10
@@ -17,6 +18,13 @@ pillow>=10
 
 # mowa / dźwięk
 faster-whisper>=1.1
+av==14.2.0       # faster-whisper 1.2 używa metadata_errors=, usuniętego w PyAV 15+; 14.2.0 = ostatnia z wheel cp312 win
+# ctranslate2 jest zbudowany pod CUDA 12, torch w venv ma CUDA 13 → biblioteki 12 z pakietów nvidia,
+# rejestrowane przez studio/__init__.py (os.add_dll_directory)
+nvidia-cublas-cu12
+nvidia-cudnn-cu12
+nvidia-cuda-runtime-cu12
+nvidia-cuda-nvrtc-cu12
 librosa>=0.10
 soundfile>=0.12
 

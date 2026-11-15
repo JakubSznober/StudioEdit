@@ -90,8 +90,12 @@ Zrobione:
 - ComfyUI portable: Python 3.13, torch 2.14.1+cu130 z `sm_120` — Blackwell obsługiwany.
 - Git 2.56 zainstalowany, repo zainicjalizowane (`main`), `.gitignore` wyklucza dane i binaria.
 
-Do zrobienia w etapie 0:
-- `git config user.name/user.email` (lokalnie w repo) i pierwszy commit.
-- Własny venv w `App\.venv` (Python 3.12) z PyTorch cu128+ (sm_120), faster-whisper, opentimelineio, scenedetect, opencv.
+- Venv `App\.venv` (Python 3.12.10): torch 2.14.1+cu130 (sm_120 potwierdzone matmulem na GPU), faster-whisper 1.2.1
+  z PyAV 14.2.0 i bibliotekami CUDA 12 z pakietów `nvidia-*` (rejestruje je `App\studio\__init__.py`),
+  opentimelineio 0.18.1 + `otio-fcp-adapter` (adapter `fcp_xml`), scenedetect 0.7.3, opencv 5.0, librosa 1.0, ollama 0.6.3.
+- `App\check_env.py` sprawdza całość (CUDA, Whisper na GPU, OTIO, FFmpeg, Ollama, zmienne) — uruchamiać po każdej zmianie środowiska.
+- Repo: `main`, tożsamość lokalna ustawiona, `.gitattributes` wymusza LF.
+
+Pozostałości:
 - W `C:\Editing Studio` zostały: stary kod `App\` (referencja), `Cache\Build` (2,9 GB, PyInstaller, do usunięcia),
   `Exports\Video` (testy syntetyczne), `StudioEditor.exe` (774 MB). Usunąć po etapie 3.
