@@ -1,0 +1,25 @@
+# StudioEdit — zależności silnika (Python 3.12, Windows, RTX 5060 Ti / Blackwell)
+# PyTorch instalowany osobno z indeksu cu130:
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
+
+# agent / LLM
+ollama>=0.6
+pydantic>=2.7
+
+# timeline
+opentimelineio>=0.17
+
+# analiza obrazu
+opencv-python>=4.10
+scenedetect>=0.6.4
+numpy>=2.0
+pillow>=10
+
+# mowa / dźwięk
+faster-whisper>=1.1
+librosa>=0.10
+soundfile>=0.12
+
+# narzędzia
+rich>=13
+pytest>=8

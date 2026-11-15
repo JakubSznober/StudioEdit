@@ -1,0 +1,23 @@
+# duże dane i binaria — nigdy do repo
+AI-Models/
+Tools/
+ComfyUI/
+Installers/
+Cache/
+Footage/
+Proxies/
+Exports/
+Backups/
+Projects/
+
+# Python
+App/.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+# system
+Thumbs.db
+desktop.ini
+*.log
