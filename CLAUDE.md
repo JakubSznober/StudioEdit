@@ -39,6 +39,9 @@ Konsekwencje dla kodu:
 1. **Indeks materiałów** (`App\studio\index\`): SQLite + embeddingi. Dla każdego ujęcia: metadane ffprobe,
    granice scen, transkrypcja, mówcy, opis VLM, twarze, ostrość, ekspozycja, ruch kamery, głośność, profil koloru.
    Wszystkie polecenia typu "wybierz najlepsze ujęcia X" to zapytania do tego indeksu.
+   Etapy: probe → proxy → shots → quality (per plik, CPU/NVENC), potem speech → embed → vision (partiami,
+   jeden model na GPU naraz). Każdy etap zapisuje się w `media.stages_done` i jest wznawialny.
+   Jednostka analizy = ujęcie, ale ujęcia dłuższe niż `max_shot_len` (20 s) są dzielone (`cut_start=0`).
 2. **Model timeline'u** (`App\studio\timeline\`): OpenTimelineIO jako jedyne źródło prawdy o projekcie.
    Historia, cofanie, wersje i Region Editor to operacje na tym modelu, nie osobne moduły.
 3. **Narzędzia atomowe** (`App\studio\tools\`): małe, testowalne operacje (cut, trim, place, color_match,
@@ -49,6 +52,20 @@ Konsekwencje dla kodu:
    JSX do After Effects, później panel czatu wewnątrz Premiere.
 
 Szczegóły i kolejność budowy: `docs\PLAN.md`.
+
+## Uruchamianie (zawsze z `App\`, przez venv)
+
+```
+.\.venv\Scripts\python.exe check_env.py                       # sprawdzenie środowiska
+.\.venv\Scripts\python.exe -m pytest tests -q                 # szybkie testy (bez GPU)
+.\.venv\Scripts\python.exe -m studio.index index <ścieżki>    # indeksowanie nagrań
+.\.venv\Scripts\python.exe -m studio.index query "tekst" --no-speech --sharp 0.3
+.\.venv\Scripts\python.exe -m studio.index show <id|ścieżka>
+.\.venv\Scripts\python.exe scripts\make_test_footage.py       # syntetyczny klip z polską mową (TTS)
+```
+
+Indeks: `Projects\_library\index.sqlite`; proxy w `Proxies\`; klatki kluczowe w `Cache\Index\keyframes\`.
+Ustawienia (modele, wysokość proxy, katalogi): `App\studio\config.py`, nadpisania w `Config\studio.json`.
 
 ## Struktura katalogów
 

@@ -52,6 +52,9 @@ def _ensure_env_defaults() -> None:
     """Gwarantuje, że cache modeli trafia do C:\\StudioEdit nawet w procesie bez zmiennych użytkownika."""
     for key, path in _DEFAULT_ENV.items():
         os.environ.setdefault(key, str(path))
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+    os.environ.setdefault("HF_HUB_OFFLINE", "0")
+    os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 
 
 CUDA_DLL_DIRS = _register_cuda_dlls()

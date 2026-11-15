@@ -96,6 +96,25 @@ Zrobione:
 - `App\check_env.py` sprawdza całość (CUDA, Whisper na GPU, OTIO, FFmpeg, Ollama, zmienne) — uruchamiać po każdej zmianie środowiska.
 - Repo: `main`, tożsamość lokalna ustawiona, `.gitattributes` wymusza LF.
 
+## Etap 1 — indeks materiałów (2026-11-15): zbudowany, przetestowany na syntetyku
+
+Pakiet `App\studio\index\`: `db.py` (SQLite + FTS5), `probe.py`, `proxy.py` (NVENC 720p + WAV 16 kHz), `shots.py`
+(AdaptiveDetector, podział >20 s), `quality.py` (ostrość Laplace'a, luma, clipping, ruch, ruch kamery, shake, klatki
+kluczowe), `speech.py` (faster-whisper, znaczniki słów, VAD), `embeddings.py` (SigLIP multilingual, p(dopasowania)
+skalibrowane), `vision.py` (Qwen3.5 9B przez Ollama, JSON wg schematu), `pipeline.py`, `query.py`, CLI `__main__.py`.
+
+Wynik na `Cache\TestFootage\test_clip_pl.mp4` (5 syntetycznych ujęć + polski TTS):
+- 5/5 cięć wykrytych dokładnie; ostrość: ostre 615, rozmyte 3, ciemne 29; luma ciemnego 0.13, jasnego 0.87 z 25% clippingu.
+- Whisper: 1 segment, pełna poprawna polska transkrypcja, język=pl.
+- VLM: 5/5 ujęć opisanych po polsku, rozpoznał rozmycie; zapytanie "rozmyty nieostry obraz" → właściwe ujęcie pierwsze.
+- SigLIP na syntetycznych planszach daje przypadkowe podobieństwa (plansza testsrc2 p=0.31 dla "ciemny obraz").
+  **Test zaliczający etapu wymaga prawdziwych nagrań w `Footage\`** — jeszcze nie wykonany.
+- 4 testy jednostkowe (`App\tests\test_index_core.py`) przechodzą.
+
+Znane ograniczenia / do zrobienia później: brak rozpoznawania mówców (pyannote) i twarzy (InsightFace); głośność
+per ujęcie (RMS/LUFS) nieliczona; HDR proxy (zscale+tonemap) nietestowane na prawdziwym HDR; VLM widzi 3 klatki,
+nie ruch.
+
 Pozostałości:
 - W `C:\Editing Studio` zostały: stary kod `App\` (referencja), `Cache\Build` (2,9 GB, PyInstaller, do usunięcia),
   `Exports\Video` (testy syntetyczne), `StudioEditor.exe` (774 MB). Usunąć po etapie 3.
