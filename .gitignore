@@ -1,23 +1,22 @@
-# duże dane i binaria — nigdy do repo
-AI-Models/
-Tools/
-ComfyUI/
-Installers/
-Cache/
-Footage/
-Proxies/
-Exports/
-Backups/
-Projects/
-
-# Python
-App/.venv/
+# Dane i duże pliki (nie trafiają do gita)
+/test.MP4
+/AI-Models/
+/ComfyUI/
+/tools/
+/.venv/
+/Cache/
+/Downloads/
+/Logs/
+/Projects/
+/Exports/
+/Backups/
+/Audio-Library/
+/LUTs/*.cube
+/config/config.json
+/frontend/node_modules/
+/app/web/
 __pycache__/
 *.pyc
-*.egg-info/
 .pytest_cache/
-
-# system
-Thumbs.db
-desktop.ini
-*.log
+*.out
+*.prof

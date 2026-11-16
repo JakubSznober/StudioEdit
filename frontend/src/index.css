@@ -1,0 +1,249 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ------------------------------------------------------------------ tokeny */
+:root {
+  --c-bg: #f6f6fa;
+  --c-bg-grad: #eef0ff;
+  --c-surface: #ffffff;
+  --c-surface-2: #f3f3f8;
+  --c-surface-3: #ebebf3;
+  --c-elevated: #ffffff;
+  --c-border: #e5e5ee;
+  --c-border-strong: #d4d4e0;
+  --c-text: #15151f;
+  --c-muted: #6a6a80;
+  --c-subtle: #9a9ab0;
+  --c-accent: #7c5cff;
+  --c-accent-2: #4f7cff;
+  --c-accent-fg: #ffffff;
+  --c-success: #10b981;
+  --c-warn: #f59e0b;
+  --c-danger: #ef4444;
+  --c-info: #3b82f6;
+  --c-track: #f0f0f6;
+  --c-track-alt: #f7f7fb;
+  --c-overlay: rgba(15, 15, 30, 0.38);
+  --shadow-sm: 0 1px 2px rgba(20, 20, 40, 0.05), 0 1px 1px rgba(20, 20, 40, 0.03);
+  --shadow-md: 0 4px 16px -4px rgba(30, 30, 70, 0.1), 0 2px 4px rgba(30, 30, 70, 0.04);
+  --shadow-lg: 0 24px 60px -12px rgba(30, 30, 80, 0.25), 0 8px 20px -8px rgba(30, 30, 80, 0.12);
+  color-scheme: light;
+}
+
+.dark {
+  --c-bg: #0a0a0f;
+  --c-bg-grad: #13112a;
+  --c-surface: #121219;
+  --c-surface-2: #181822;
+  --c-surface-3: #20202c;
+  --c-elevated: #1a1a24;
+  --c-border: #24242f;
+  --c-border-strong: #33333f;
+  --c-text: #ececf3;
+  --c-muted: #9090a6;
+  --c-subtle: #66667a;
+  --c-accent: #8b6dff;
+  --c-accent-2: #5b86ff;
+  --c-accent-fg: #ffffff;
+  --c-success: #34d399;
+  --c-warn: #fbbf24;
+  --c-danger: #f87171;
+  --c-info: #60a5fa;
+  --c-track: #15151d;
+  --c-track-alt: #111118;
+  --c-overlay: rgba(0, 0, 0, 0.6);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 6px 20px -6px rgba(0, 0, 0, 0.6), 0 2px 4px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 30px 70px -12px rgba(0, 0, 0, 0.75), 0 10px 24px -8px rgba(0, 0, 0, 0.5);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--c-bg);
+  --color-surface: var(--c-surface);
+  --color-surface-2: var(--c-surface-2);
+  --color-surface-3: var(--c-surface-3);
+  --color-elevated: var(--c-elevated);
+  --color-border: var(--c-border);
+  --color-border-strong: var(--c-border-strong);
+  --color-text: var(--c-text);
+  --color-muted: var(--c-muted);
+  --color-subtle: var(--c-subtle);
+  --color-accent: var(--c-accent);
+  --color-accent-2: var(--c-accent-2);
+  --color-accent-fg: var(--c-accent-fg);
+  --color-success: var(--c-success);
+  --color-warn: var(--c-warn);
+  --color-danger: var(--c-danger);
+  --color-info: var(--c-info);
+  --color-track: var(--c-track);
+  --color-track-alt: var(--c-track-alt);
+  --shadow-soft: var(--shadow-sm);
+  --shadow-card: var(--shadow-md);
+  --shadow-pop: var(--shadow-lg);
+  --font-sans: "Inter", "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Code", "Cascadia Mono", "JetBrains Mono", Consolas, ui-monospace, monospace;
+}
+
+/* ------------------------------------------------------------------ baza */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--c-bg);
+  color: var(--c-text);
+  font-family: var(--font-sans);
+  font-feature-settings: "cv11", "ss01", "tnum" 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+* {
+  border-color: var(--c-border);
+}
+
+::selection {
+  background: color-mix(in oklab, var(--c-accent) 30%, transparent);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* przewijanie */
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--c-border-strong) transparent;
+}
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: var(--c-border-strong);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* skeleton */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--c-surface-3);
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--c-surface) 70%, transparent), transparent);
+  animation: shimmer 1.4s infinite;
+}
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* animowane paski postępu */
+.progress-stripes {
+  background-image: linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.22) 25%,
+    transparent 25%,
+    transparent 50%,
+    rgba(255, 255, 255, 0.22) 50%,
+    rgba(255, 255, 255, 0.22) 75%,
+    transparent 75%,
+    transparent
+  );
+  background-size: 16px 16px;
+  animation: stripes 0.8s linear infinite;
+}
+@keyframes stripes {
+  to {
+    background-position: 16px 0;
+  }
+}
+
+.bg-app {
+  background:
+    radial-gradient(1200px 500px at 85% -10%, color-mix(in oklab, var(--c-accent) 9%, transparent), transparent 60%),
+    radial-gradient(900px 400px at -10% 110%, color-mix(in oklab, var(--c-accent-2) 6%, transparent), transparent 60%),
+    var(--c-bg);
+}
+
+.accent-gradient {
+  background-image: linear-gradient(135deg, var(--c-accent), var(--c-accent-2));
+}
+
+.text-gradient {
+  background-image: linear-gradient(135deg, var(--c-accent), var(--c-accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+input[type="range"].range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 4px;
+  background: var(--c-surface-3);
+  outline: none;
+}
+input[type="range"].range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--c-accent);
+  border: 2px solid var(--c-surface);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+}
+input[type="range"].range::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--c-accent);
+  border: 2px solid var(--c-surface);
+  cursor: pointer;
+}
+
+kbd {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  border: 1px solid var(--c-border-strong);
+  border-bottom-width: 2px;
+  background: var(--c-surface-2);
+  color: var(--c-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
