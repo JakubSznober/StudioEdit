@@ -33,17 +33,41 @@ function analysisState(m: MediaItem, running: boolean): { label: string; tone: '
   return { label: 'Przeanalizowano', tone: 'success' };
 }
 
-function Thumb({ pid, m, className }: { pid: string; m: MediaItem; className?: string }) {
+/** Proporcje pliku jako tekst („9:16”, „16:9”, „4:3”…) albo null. */
+export function aspectLabel(w?: number, h?: number): string | null {
+  if (!w || !h) return null;
+  const r = w / h;
+  const known: [number, string][] = [[16 / 9, '16:9'], [9 / 16, '9:16'], [4 / 3, '4:3'], [3 / 4, '3:4'], [1, '1:1'], [4 / 5, '4:5'], [21 / 9, '21:9']];
+  const hit = known.find(([k]) => Math.abs(r - k) / k < 0.03);
+  return hit ? hit[1] : r >= 1 ? `${r.toFixed(2)}:1` : `1:${(1 / r).toFixed(2)}`;
+}
+
+/** Krótki opis zawartości klipu z analizy (bez znaczników czasu). */
+export function mediaDescription(m: MediaItem): string {
+  const a = m.analysis;
+  const first = (a?.summary || '').split(/\n|;\s*(?=\[)/)[0] || '';
+  const s = first.replace(/^\s*\[[\d.\s-]+\]\s*/, '').trim() || a?.shots?.find((x) => x.description)?.description || '';
+  if (s) return s;
+  const ts = m.transcript_summary as Record<string, unknown> | string | null | undefined;
+  const prev = ts && typeof ts === 'object' ? String(ts.preview || '') : '';
+  return prev ? `„${prev}”` : '';
+}
+
+function Thumb({ pid, m, className, playing }: { pid: string; m: MediaItem; className?: string; playing?: boolean }) {
   const [err, setErr] = useState(false);
   const Icon = m.kind === 'audio' ? AudioWaveform : ImageIcon;
   return (
-    <div className={cx('relative overflow-hidden rounded-lg bg-surface-3', className)}>
+    <div className={cx('relative overflow-hidden rounded-lg bg-black', className)}>
       {!err && m.kind !== 'audio' ? (
-        <img src={urls.thumb(pid, m.id, m.thumb ? 1 : undefined)} alt="" loading="lazy" className="h-full w-full object-cover" onError={() => setErr(true)} draggable={false} />
+        // object-contain: pion 9:16 pokazujemy jako pion (z czarnym tłem), nigdy nie przycinamy ani nie rozciągamy
+        <img src={urls.thumb(pid, m.id, m.thumb ? 1 : undefined)} alt="" loading="lazy" className="h-full w-full object-contain" onError={() => setErr(true)} draggable={false} />
       ) : (
-        <div className="flex h-full w-full items-center justify-center text-subtle">
+        <div className="flex h-full w-full items-center justify-center bg-surface-3 text-subtle">
           <Icon size={18} />
         </div>
+      )}
+      {playing && m.kind === 'video' && m.proxy && (
+        <video src={urls.proxy(pid, m.id)} muted autoPlay loop playsInline preload="auto" className="absolute inset-0 h-full w-full bg-black object-contain" />
       )}
       {m.info?.duration ? (
         <span className="tabular absolute right-1 bottom-1 rounded bg-black/65 px-1 text-[9.5px] font-medium text-white">{dur(m.info.duration)}</span>
@@ -55,27 +79,35 @@ function Thumb({ pid, m, className }: { pid: string; m: MediaItem; className?: s
 function MediaCard({ pid, m, running, onOpen }: { pid: string; m: MediaItem; running: boolean; onOpen: () => void }) {
   const st = analysisState(m, running);
   const info = m.info || {};
+  const [hover, setHover] = useState(false);
+  const ar = aspectLabel(Number(info.width), Number(info.height));
+  const desc = mediaDescription(m);
   return (
     <motion.button
       layout="position"
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       onClick={onOpen}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
       className={cx(
         'group flex w-full gap-2.5 rounded-xl border border-transparent p-1.5 text-left transition-all hover:border-border hover:bg-surface-2 cursor-pointer',
         m.bin === 'Odrzucone_Duble' && 'opacity-60',
       )}
+      title={desc || m.name}
     >
-      <Thumb pid={pid} m={m} className="h-[52px] w-[86px] shrink-0" />
+      <Thumb pid={pid} m={m} playing={hover} className="h-[64px] w-[86px] shrink-0" />
       <div className="min-w-0 flex-1">
         <div className="truncate text-[12.5px] font-medium" title={m.name}>
           {m.name}
         </div>
         <div className="tabular truncate text-[10.5px] text-muted">
           {info.width ? `${info.width}×${info.height}` : m.kind === 'audio' ? 'audio' : '—'}
+          {ar ? ` · ${ar}` : ''}
           {info.fps ? ` · ${Math.round(Number(info.fps) * 100) / 100} fps` : ''}
           {m.analysis?.log_profile ? ` · ${m.analysis.log_profile}` : ''}
         </div>
+        {desc && <div className="mt-0.5 line-clamp-2 text-[10.5px] leading-snug text-subtle">{desc}</div>}
         <div className="mt-1 flex flex-wrap items-center gap-1">
           <Badge tone={st.tone} className="!px-1 !text-[10px]">
             {st.tone === 'accent' && <Spinner size={9} className="text-accent" />}
@@ -134,24 +166,45 @@ function MediaPreview({ pid, m, onClose }: { pid: string; m: MediaItem | null; o
   return (
     <Dialog open={!!m} onClose={onClose} title={item?.name} subtitle={item?.path} width={860}>
       {item && (
-        <div className="grid grid-cols-1 gap-5 p-5 lg:grid-cols-[1.4fr_1fr]">
+        <div className="grid grid-cols-1 gap-5 p-5 md:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
           <div>
-            <div className="overflow-hidden rounded-xl bg-black">
+            <div className="flex justify-center overflow-hidden rounded-xl bg-black">
               {item.kind === 'video' ? (
-                <video src={urls.proxy(pid, item.id)} poster={urls.thumb(pid, item.id)} controls className="aspect-video w-full bg-black" preload="metadata" />
+                // pole w proporcjach pliku: pion zostaje pionem, poziom poziomem
+                <video
+                  src={urls.proxy(pid, item.id)}
+                  poster={urls.thumb(pid, item.id)}
+                  controls
+                  className="block max-w-full bg-black object-contain"
+                  style={{ aspectRatio: info.width && info.height ? `${info.width} / ${info.height}` : '16 / 9', maxHeight: '62vh', width: '100%' }}
+                  preload="metadata"
+                />
               ) : item.kind === 'audio' ? (
-                <div className="flex aspect-video flex-col items-center justify-center gap-4 p-6">
+                <div className="flex aspect-video w-full flex-col items-center justify-center gap-4 p-6">
                   <AudioWaveform size={40} className="text-white/50" />
                   <audio src={urls.proxy(pid, item.id)} controls className="w-full" />
                 </div>
               ) : (
-                <img src={urls.thumb(pid, item.id)} alt="" className="aspect-video w-full object-contain" />
+                <img src={urls.thumb(pid, item.id)} alt="" className="block max-w-full object-contain" style={{ maxHeight: '62vh' }} />
               )}
             </div>
             {a?.summary && (
               <div className="mt-3 rounded-xl bg-surface-2 p-3 text-[12.5px] leading-relaxed">
-                <div className="mb-1 text-[11px] font-semibold text-muted">Opis archiwisty</div>
-                {a.summary}
+                <div className="mb-1 text-[11px] font-semibold text-muted">Co jest w klipie (opis archiwisty)</div>
+                <div className="space-y-1">
+                  {a.summary
+                    .split(/\n|;\s*(?=\[)/)
+                    .filter(Boolean)
+                    .map((line, i) => {
+                      const mt = line.match(/^\s*\[([\d.]+)\s*-\s*([\d.]+)\]\s*(.*)$/);
+                      return (
+                        <div key={i} className="flex gap-2">
+                          {mt && <span className="tabular shrink-0 text-subtle">{tc(Number(mt[1]), Number(info.fps) || 30)}</span>}
+                          <span>{mt ? mt[3] : line}</span>
+                        </div>
+                      );
+                    })}
+                </div>
               </div>
             )}
             {transcriptText && (

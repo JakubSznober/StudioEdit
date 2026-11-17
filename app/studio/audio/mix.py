@@ -25,6 +25,7 @@ from . import SR, extract_wav, file_lock, file_sig, frame_rms_db, load_wav, para
 from . import loudness as ldn
 
 DIALOG_REF_LUFS = -20.0
+MUTE_DB = -60.0  # gain_db <= MUTE_DB → klip wyciszony
 FRAME = 0.01  # ramki obwiedni (ducking, gating)
 
 
@@ -426,9 +427,11 @@ def _media_path(project, media_id: str | None, path: str | None) -> tuple[str | 
 
 def dialog_clips(project, tl: Timeline) -> list[tuple[AClip, float]]:
     """Klipy dialogowe (AClip, speed): A1, a gdy pusty - audio z klipów V1 a_roll z mediami z dźwiękiem."""
+    if tl.track_off("A1"):
+        return []  # dialog wyciszony w studiu - bez zapasowego dźwięku z kamery
     vmap = {v.id: v for v in tl.v("V1")}
     out: list[tuple[AClip, float]] = []
-    for c in tl.a("A1"):
+    for c in tl.a_active("A1"):
         sp = float(c.processing.get("speed") or (vmap[c.link].speed if c.link in vmap else 1.0) or 1.0)
         out.append((c, sp))
     if out:
@@ -460,6 +463,8 @@ def timeline_key(tl: Timeline) -> str:
     d = tl.to_json()
     for k in ("version", "note", "created_at", "created_by", "plan", "brief"):
         d.pop(k, None)
+    if not any(v for st in (d.get("track_state") or {}).values() for v in st.values()):
+        d.pop("track_state", None)
     return param_hash(d)
 
 
@@ -541,7 +546,8 @@ def render_mix(project, timeline: Timeline, out_wav: Path, *, progress=None, can
                 continue
             audio = reader.read(s, a0, a1)
             env = envelope(s, a0 - js0, a1 - js0)
-            g = 10 ** ((s.gain_db + (gain_fn(s) if gain_fn else 0.0)) / 20)
+            # -60 dB i mniej = klip wyciszony ręcznie w studiu (przycisk „Wycisz”)
+            g = 0.0 if s.gain_db <= MUTE_DB else 10 ** ((s.gain_db + (gain_fn(s) if gain_fn else 0.0)) / 20)
             if channels > 1 and audio.ndim == 1:
                 audio = np.repeat(audio[:, None], channels, axis=1)
             if channels == 1 and audio.ndim == 2:
@@ -561,7 +567,7 @@ def render_mix(project, timeline: Timeline, out_wav: Path, *, progress=None, can
         d_lufs = DIALOG_REF_LUFS
 
     # --- A5 lektor ---------------------------------------------------------------------------
-    vsegs = _plain_segs(project, tl.a("A5"), stereo=False, role="vo")
+    vsegs = _plain_segs(project, tl.a_active("A5"), stereo=False, role="vo")
     plan_fades(vsegs, micro)
     vo = render_track(vsegs, 1, lambda s: d_lufs - file_lufs(s.src) if file_lufs(s.src) > -60 else 0.0)
     speech = dialog + vo
@@ -570,7 +576,7 @@ def render_mix(project, timeline: Timeline, out_wav: Path, *, progress=None, can
     # --- A2 room tone ------------------------------------------------------------------------
     rt = np.zeros(N, np.float32)
     if mix.room_tone:
-        rsegs = _plain_segs(project, tl.a("A2"), stereo=False, role="roomtone")
+        rsegs = _plain_segs(project, tl.a_active("A2"), stereo=False, role="roomtone")
         if not rsegs and dsegs:
             auto = _auto_room_tone(project, tl, dsegs, cache_root, warnings)
             if auto is not None:
@@ -590,7 +596,7 @@ def render_mix(project, timeline: Timeline, out_wav: Path, *, progress=None, can
 
     # --- A3 muzyka z duckingiem ------------------------------------------------------------------
     music = np.zeros((N, 2), np.float32)
-    msegs = _plain_segs(project, tl.a("A3"), stereo=True, role="music")
+    msegs = _plain_segs(project, tl.a_active("A3"), stereo=True, role="music")
     if msegs:
         for s in msegs:
             if s.end >= full_dur - 0.05 and s.fade_out < 0.5:
@@ -611,7 +617,7 @@ def render_mix(project, timeline: Timeline, out_wav: Path, *, progress=None, can
     p(0.7)
 
     # --- A4 SFX ------------------------------------------------------------------------------------
-    ssegs = _plain_segs(project, tl.a("A4"), stereo=True, role="sfx")
+    ssegs = _plain_segs(project, tl.a_active("A4"), stereo=True, role="sfx")
     plan_fades(ssegs, 0.006)
     sfx = render_track(ssegs, 2, lambda s: (d_lufs - DIALOG_REF_LUFS) - 4.0)
     p(0.75)

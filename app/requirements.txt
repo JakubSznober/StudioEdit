@@ -11,6 +11,7 @@ websockets>=12
 
 # System / GPU
 psutil>=5.9
+truststore>=0.9  # HTTPS przez magazyn certyfikatów Windows (Norton/antywirusy z inspekcją TLS)
 nvidia-ml-py>=12.535
 
 # Obraz i wideo
@@ -25,9 +26,12 @@ soundfile>=0.12
 librosa>=0.10.2
 pyloudnorm>=0.1.1
 scipy>=1.13
+scikit-learn>=1.4  # grupowanie mówców
+onnxruntime>=1.18  # DeepFilterNet 3, YuNet, Piper
 
 # Tekst
 rapidfuzz>=3.9
+fonttools>=4.50  # pomiar szerokości napisów
 
 # Modele lokalne
 huggingface_hub>=0.24
@@ -42,7 +46,7 @@ nvidia-cudnn-cu12>=9
 # Testy
 pytest>=8
 
-# Audio: klonowanie głosu (Chatterbox Multilingual) - instalować z --no-deps (pakiet wymusza torch==2.6/numpy<2):
-#   pip install --no-deps chatterbox-tts==0.1.7 s3tokenizer resemble-perth conformer==0.3.2 diffusers omegaconf antlr4-python3-runtime einops pykakasi jaconv
+# Audio: klonowanie głosu (Chatterbox Multilingual) - instaluje scripts\install_python.ps1 z --no-deps
+# (pakiet wymusza torch==2.6/numpy<2), lista w app\requirements-nodeps.txt
 onnx>=1.16
 esprima>=4.0.1  # walidacja składni JSX (eksport After Effects)

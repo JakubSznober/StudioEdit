@@ -14,6 +14,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "app"))
+try:
+    sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]  # konsola cp1250 nie zna „→”
+except Exception:
+    pass
+try:
+    import truststore  # Norton i inne antywirusy z inspekcją TLS: certyfikaty z magazynu Windows
+
+    truststore.inject_into_ssl()
+except Exception:
+    pass
 
 from studio import paths  # noqa: E402
 

@@ -59,7 +59,7 @@ zadania tego samego modelu są grupowane, a usługi Ollama/ComfyUI budzą się i
 | STT | Whisper large-v3-turbo (faster-whisper, CUDA fp16) | słowa ze znacznikami czasu |
 | Diaryzacja | `microsoft/wavlm-base-plus-sv` | bez tokenów HF |
 | Lektor | Piper (pl_PL gosia / darkman) + klonowanie głosu Chatterbox Multilingual | Chatterbox zainstalowany z `--no-deps` (chroni torch cu128) |
-| Odszumianie | RNNoise (`arnndn`) + `afftdn` | DeepFilterNet 3 nie ma paczki dla Pythona 3.12/Windows — włączy się sam, gdy będzie dostępny |
+| Odszumianie | DeepFilterNet 3 (ONNX, onnxruntime CPU) | Oficjalny eksport ONNX z repozytorium autora, STFT i cechy libDF odtworzone w numpy (`app/studio/audio/dfnet.py`) — bez pakietu `deepfilternet`, który na Pythonie 3.12/Windows się nie instaluje. Pobieranie w panelu Modele (8 MB, suma SHA-256 sprawdzana). Gdy niepobrany: RNNoise (`arnndn`) + `afftdn` |
 | Relighting | klasyczny (maska kierunkowa + twarz) | IC-Light / ProPainter wymagają węzłów ComfyUI, których brak — opcjonalne |
 | Muzyka | MusicGen stereo medium + biblioteka `Audio-Library\Music` | |
 | SFX | synteza proceduralna + `Audio-Library\SFX` | |

@@ -14,7 +14,9 @@ STATS = {"luma_mean": 0.45, "luma_p01": 0.03, "luma_p99": 0.95, "clipped_pct": 0
          "wb_rgb": [0.5, 0.5, 0.5], "sat_mean": 0.3, "lab_mean": [50.0, 2.0, 5.0], "lab_std": [20.0, 8.0, 10.0],
          "skin_pct": 5.0, "sky_pct": 10.0, "hist": [1 / 32] * 32, "color_range": "tv"}
 PROFILES = ["rec709", "slog3", "clog3", "dlog", "vlog", "hlg", "pq", "flat"]
-LOOKS = [None, "teal_orange", "warm_film", "clean_doc", "moody", "bw_film", "vibrant_social", "pastel"]
+from studio.color.looks import BUILTIN  # noqa: E402
+
+LOOKS = [None] + [b["id"] for b in BUILTIN]
 
 
 def _gray_ramp(n=256):

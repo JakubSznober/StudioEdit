@@ -7,8 +7,42 @@ from ..project.model import Sentence
 from .material import SentenceUnit
 
 
-def group_takes(units: list[SentenceUnit], *, window: int = 8, threshold: float = 78.0) -> dict[str, list[SentenceUnit]]:
-    """Grupuje powtórzenia tej samej kwestii (bliskie w czasie, podobny tekst) i wybiera HERO_TAKE."""
+_STOP = {"jest", "się", "oraz", "który", "która", "które", "przez", "tylko", "tutaj", "teraz", "jakby", "właśnie",
+         "bardzo", "będzie", "jestem", "jesteśmy", "można", "trzeba", "wszystko", "takie", "taki", "żeby", "tego",
+         "temu", "tych", "czyli", "dokładnie", "ogólnie", "przecież", "kiedy", "więc", "jeszcze", "wcale", "może",
+         "albo", "jakie", "jaki", "jaka", "nawet", "potem", "wtedy", "słuchajcie", "dobra", "dobrze"}
+
+
+def content_stems(text: str) -> set[str]:
+    """Rdzenie słów treściowych (5 pierwszych liter słów ≥ 4 znaki) - odporne na odmianę i szyk."""
+    import re
+
+    words = re.findall(r"[\wąćęłńóśźż]{4,}", (text or "").lower())
+    return {w[:5] for w in words if w not in _STOP}
+
+
+def take_similarity(a: str, b: str) -> float:
+    """0-100: ta sama kwestia powiedziana innymi słowami (parafraza dubla) też daje wysoki wynik.
+
+    Bierzemy maksimum z podobieństwa napisów (rapidfuzz) i pokrycia rdzeni treściowych krótszego zdania
+    przez dłuższe - to drugie łapie np. „ten wcześniejszy artykuł okazał się przykładem dezinformacji”
+    vs „okazało się, że wcześniejszy artykuł był typowym przykładem dezinformacji”.
+    """
+    a, b = a.lower(), b.lower()
+    if min(len(a), len(b)) / max(len(a), len(b), 1) < 0.5:
+        sim = fuzz.partial_ratio(a, b)  # częsty przypadek: urwany dubel - porównaj z prefiksem
+    else:
+        sim = fuzz.token_set_ratio(a, b)
+    sa, sb = content_stems(a), content_stems(b)
+    if min(len(sa), len(sb)) >= 5:
+        short, long_ = (sa, sb) if len(sa) <= len(sb) else (sb, sa)
+        if len(short) / len(long_) >= 0.45:
+            sim = max(sim, 100.0 * len(short & long_) / len(short))
+    return float(sim)
+
+
+def group_takes(units: list[SentenceUnit], *, window: int = 14, threshold: float = 78.0) -> dict[str, list[SentenceUnit]]:
+    """Grupuje powtórzenia tej samej kwestii (bliskie w czasie, podobny tekst lub parafraza) i wybiera HERO_TAKE."""
     groups: dict[str, list[SentenceUnit]] = {}
     assigned: dict[str, str] = {}
     for i, u in enumerate(units):
@@ -19,13 +53,7 @@ def group_takes(units: list[SentenceUnit], *, window: int = 8, threshold: float 
         for v in units[i + 1:i + 1 + window]:
             if v.id in assigned or v.spk != u.spk and u.spk and v.spk:
                 continue
-            a, b = u.text.lower(), v.text.lower()
-            if min(len(a), len(b)) / max(len(a), len(b), 1) < 0.5:
-                # częsty przypadek: urwany dubel - porównaj z prefiksem
-                sim = fuzz.partial_ratio(a, b)
-            else:
-                sim = fuzz.token_set_ratio(a, b)
-            if sim >= threshold:
+            if take_similarity(u.text, v.text) >= threshold:
                 members.append(v)
         if len(members) > 1:
             for mbr in members:

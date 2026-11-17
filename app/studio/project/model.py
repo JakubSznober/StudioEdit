@@ -319,13 +319,23 @@ class Timeline(BaseModel):
     note: str = ""
     created_at: float = Field(default_factory=time.time)
     created_by: str = ""
+    # stan ścieżek ze studia: {"V2": {"hidden": true}, "A4": {"muted": true}} - wyłączone nie trafiają do renderu
+    track_state: dict[str, dict[str, bool]] = Field(default_factory=dict)
 
     # pomocnicze ---------------------------------------------------------------------------
+    def track_off(self, track: str) -> bool:
+        st = self.track_state.get(track) or {}
+        return bool(st.get("hidden") or st.get("muted"))
+
     def v(self, track: str = "V1") -> list[VClip]:
         return [c if isinstance(c, VClip) else VClip(**c) for c in self.tracks.get(track, [])]
 
     def a(self, track: str = "A1") -> list[AClip]:
         return [c if isinstance(c, AClip) else AClip(**c) for c in self.tracks.get(track, [])]
+
+    def a_active(self, track: str) -> list[AClip]:
+        """Klipy ścieżki audio do miksu (pusta lista, gdy ścieżka wyciszona w studiu)."""
+        return [] if self.track_off(track) else self.a(track)
 
     def titles(self) -> list[TitleClip]:
         return [c if isinstance(c, TitleClip) else TitleClip(**c) for c in self.tracks.get("V3", [])

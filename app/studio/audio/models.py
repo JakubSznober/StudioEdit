@@ -40,9 +40,10 @@ CATALOG: list[dict] = [
      "repo": "facebook/musicgen-stereo-medium", "size_gb": 4.08,
      "allow": ["*.json", "model.safetensors", "spiece.model"],
      "description": "Generowanie muzyki w tle z opisu (GPU fp16).", "used_by": ["sound"]},
-    {"key": "deepfilternet3", "name": "DeepFilterNet 3", "kind": "denoise", "provider": "pip",
-     "package": "deepfilternet", "size_gb": 0.01, "optional": True,
-     "description": "Neuronowe odszumianie mowy 48 kHz (gdy niedostępne: RNNoise arnndn + afftdn).",
+    {"key": "deepfilternet3", "name": "DeepFilterNet 3 (ONNX)", "kind": "denoise", "provider": "file",
+     "size_gb": 0.008, "optional": True,
+     "description": "Neuronowe odszumianie mowy 48 kHz, onnxruntime na CPU, bez opóźnienia dźwięku "
+                    "(gdy niepobrane: RNNoise arnndn + afftdn).",
      "used_by": ["sound"]},
     {"key": "chatterbox_mtl", "name": "Chatterbox Multilingual (klonowanie głosu)", "kind": "tts",
      "provider": "hf", "repo": "ResembleAI/chatterbox", "size_gb": 3.3, "optional": True,
@@ -94,11 +95,11 @@ def installed(key: str) -> bool:
     if e["provider"] == "piper":
         p = piper_voice_path(e["voice"])
         return p.exists() and p.with_suffix(".onnx.json").exists()
-    if e["provider"] == "pip":
-        if key == "deepfilternet3":
-            from . import clean
+    if key == "deepfilternet3":
+        from . import clean
 
-            return clean.deepfilter_available()
+        return clean.deepfilter_available()
+    if e["provider"] == "pip":
         return _pip_ok(e["package"])
     if key == "chatterbox_mtl" and not _pip_ok("chatterbox-tts"):
         return False
@@ -116,15 +117,14 @@ def download(key: str, progress: Callable[[float], None] | None = None) -> None:
     e = entry(key)
     if progress:
         progress(0.0)
-    if e["provider"] == "piper":
+    if key == "deepfilternet3":
+        from . import dfnet
+
+        dfnet.download(progress=progress)
+    elif e["provider"] == "piper":
         _download_piper(e["voice"])
     elif e["provider"] == "pip":
-        if key == "deepfilternet3":
-            from . import clean
-
-            if not clean.deepfilter_available():
-                raise RuntimeError("DeepFilterNet nie działa z bieżącym torch/torchaudio - używany jest RNNoise")
-            clean.load_deepfilter()  # pobiera wagi przy pierwszym użyciu
+        raise RuntimeError(f"{e['name']}: zainstaluj pakiet {e['package']} w .venv")
     else:
         _hf_env()
         from huggingface_hub import snapshot_download

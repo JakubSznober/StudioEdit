@@ -163,6 +163,8 @@ function BeforeAfter({ pid, variant, version, width }: { pid: string; variant: s
 }
 
 // ------------------------------------------------------------------ Player
+const AUTO_PREVIEW_DELAY_MS = 2000;
+
 export function Player() {
   const pid = useProject((s) => s.activeId);
   const tl = useProject((s) => s.timeline);
@@ -207,6 +209,45 @@ export function Player() {
   );
 
   const hasClips = !!tl && Object.values(tl.tracks || {}).some((items) => (items || []).length > 0);
+
+  // ---------------------------------------------------------------- auto-podgląd
+  // Po każdej zmianie osi (ręcznej, z czatu, cofnięcia) podgląd sam się przelicza: gdy jest nieaktualny,
+  // w projekcie nic nie pracuje (montaż sam renderuje na końcu) i nie trwa render tego wariantu.
+  const tasks = useLive((s) => s.tasks);
+  const projectBusy = useMemo(
+    () => Object.values(tasks).some((t) => t.project_id === pid && ['queued', 'waiting', 'running'].includes(t.status)),
+    [tasks, pid],
+  );
+  const [auto, setAuto] = useState(() => {
+    try {
+      return localStorage.getItem('studioedit.autoPreview') !== '0';
+    } catch {
+      return true;
+    }
+  });
+  const toggleAuto = () =>
+    setAuto((a) => {
+      try {
+        localStorage.setItem('studioedit.autoPreview', a ? '0' : '1');
+      } catch {
+        /* brak localStorage */
+      }
+      return !a;
+    });
+  const autoDone = useRef('');
+  const needsPreview = hasClips && previewLoaded && (!preview?.url || !!preview?.stale);
+  useEffect(() => {
+    if (!auto || !pid || !tl || !needsPreview || activeRender || rendering || projectBusy) return;
+    // klucz: wersja osi + stan ostatniego podglądu. Numer wersji powtarza się po cofnięciu, więc sam nie wystarczy;
+    // gdy render się nie uda, rendered_at się nie zmienia - nie ponawiamy w pętli
+    const key = `${pid}:${variant}:${tl.version}:${preview?.rendered_at ?? 0}`;
+    if (autoDone.current === key) return;
+    const h = window.setTimeout(() => {
+      autoDone.current = key;
+      P.renderPreview(pid, { variant }).catch(() => undefined);
+    }, AUTO_PREVIEW_DELAY_MS);
+    return () => window.clearTimeout(h);
+  }, [auto, pid, variant, tl, needsPreview, activeRender, rendering, projectBusy, preview?.rendered_at]);
 
   const renderPreview = async () => {
     if (!pid) return;
@@ -402,6 +443,18 @@ export function Player() {
             podgląd v{preview.version ?? '?'}
           </Badge>
         )}
+        <Tip text={auto ? 'Auto-podgląd włączony: po każdej zmianie osi podgląd przelicza się sam' : 'Auto-podgląd wyłączony: odświeżasz ręcznie'}>
+          <button
+            onClick={toggleAuto}
+            aria-pressed={auto}
+            className={cx(
+              'ml-1 flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] font-semibold cursor-pointer',
+              auto ? 'bg-success/12 text-success' : 'bg-surface-3 text-muted hover:text-text',
+            )}
+          >
+            <RefreshCw size={11} className={auto && (activeRender || rendering) ? 'animate-spin' : ''} /> Auto
+          </button>
+        </Tip>
       </div>
     </div>
   );

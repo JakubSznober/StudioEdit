@@ -176,6 +176,17 @@ export interface SystemStatus {
   active_project?: string | ProjectSummary | null;
 }
 
+/** Styl montażu z katalogu serwera (GET /api/styles). */
+export interface StyleInfo {
+  key: string;
+  label: string;
+  description: string;
+  rules: string[];
+  look: string;
+  music_mood: string;
+  pace: string;
+}
+
 export interface Look {
   id: string;
   name: string;
@@ -508,6 +519,8 @@ export interface Timeline {
   created_at: number;
   created_by: string;
   duration: number;
+  /** ścieżki ukryte / wyciszone w studiu (nie trafiają do renderu) */
+  track_state?: Record<string, { hidden?: boolean; muted?: boolean }>;
 }
 
 export interface TimelineVersion {

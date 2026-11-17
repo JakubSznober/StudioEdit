@@ -43,7 +43,8 @@ const SHORTCUTS: [string, string][] = [
 ];
 
 function PipelinePill() {
-  const group = useUI((s) => s.pipelineGroup);
+  const pid = useProject((s) => s.activeId);
+  const group = useUI((s) => (s.pipelineProject === pid ? s.pipelineGroup : null));
   const tasks = useGroupTasks(group);
   if (!group) return null;
   const g = groupProgress(tasks);
@@ -52,7 +53,7 @@ function PipelinePill() {
     <motion.button
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
-      onClick={() => ui.openWizard(true)}
+      onClick={() => ui.openWizard(true, 'progress')}
       className={cx(
         'flex h-8 items-center gap-2 rounded-full border px-3 text-[12px] font-medium transition-colors cursor-pointer',
         done ? (g.failed ? 'border-warn/40 bg-warn/10 text-warn' : 'border-success/40 bg-success/10 text-success') : 'border-accent/30 bg-accent/8 text-accent',

@@ -18,6 +18,7 @@ import type {
   ProjectSummary,
   QCReport,
   Range,
+  StyleInfo,
   Service,
   StorageInfo,
   SystemStatus,
@@ -61,6 +62,7 @@ export const sys = {
   cancelTask: (id: string) => api.post<{ cancelled: boolean }>(`/api/tasks/${id}/cancel`),
   cancelTasks: (body: { group?: string; project_id?: string }) => api.post<unknown>('/api/tasks/cancel', body),
   looks: () => api.get<Look[]>('/api/looks'),
+  styles: () => api.get<StyleInfo[]>('/api/styles'),
   logs: (params: { project_id?: string; agent?: string; limit?: number }) =>
     api.get<(LogEntry | { data: LogEntry; id?: number; ts?: number })[]>(`/api/logs${qs(params)}`),
 };
@@ -84,6 +86,13 @@ export interface MontageRequest {
   music_mood?: string;
   subtitles?: boolean;
 }
+
+/** Ręczna edycja z osi czasu (V1 układa się magnetycznie, bez luk). */
+export type TimelineEdit =
+  | { op: 'reorder'; clip_id: string; index: number }
+  | { op: 'move'; clip_id: string; start: number }
+  | { op: 'trim'; clip_id: string; edge: 'in' | 'out'; delta: number }
+  | { op: 'delete'; clip_id: string };
 
 export interface ExportRequest {
   variants: string[];
@@ -125,6 +134,9 @@ export const projects = {
   checkout: (pid: string, version: number) => api.post<Timeline>(`${P(pid)}/timeline/checkout/${version}`),
   patchClip: (pid: string, clipId: string, body: Record<string, unknown>) =>
     api.patch<Timeline>(`${P(pid)}/timeline/clips/${clipId}`, body),
+  editTimeline: (pid: string, body: TimelineEdit) => api.post<Timeline>(`${P(pid)}/timeline/edit`, body),
+  trackState: (pid: string, track: string, body: { hidden?: boolean; muted?: boolean }) =>
+    api.patch<Timeline>(`${P(pid)}/timeline/tracks/${track}`, body),
 
   renderPreview: (pid: string, body: { variant?: string; t0?: number; t1?: number }) =>
     api.post<Group>(`${P(pid)}/preview/render`, body),

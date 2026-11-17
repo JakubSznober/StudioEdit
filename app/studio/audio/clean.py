@@ -1,7 +1,8 @@
 """Czyszczenie głosu: highpass, odszumianie, lekka redukcja pogłosu, EQ czytelności, de-esser, kompresja, limiter.
 
-Odszumianie: DeepFilterNet 3 (gdy pakiet `deepfilternet` działa) albo RNNoise (`arnndn`, model
-`tools/rnnoise/std.rnnn`) + łagodny `afftdn`. Wynik: WAV 48 kHz mono float32, cache wg hasha parametrów.
+Odszumianie: DeepFilterNet 3 (ONNX przez onnxruntime, moduł `dfnet`, gdy wagi są pobrane) albo RNNoise
+(`arnndn`, model `tools/rnnoise/std.rnnn`) + łagodny `afftdn`. Wynik: WAV 48 kHz mono float32, cache wg hasha
+parametrów.
 """
 from __future__ import annotations
 
@@ -17,42 +18,36 @@ from ..events import log
 from ..media.ffmpeg import escape_filter_path, filters, media_info, run
 from . import extract_wav, file_lock, file_sig, frame_rms_db, load_wav, param_hash
 
-VERSION = 3
+VERSION = 4  # 4: kompensacja opóźnienia filtrów, usuwanie NaN z arnndn
 DEFAULT_CHAIN = {"highpass": 80, "denoise": "auto", "dereverb": 0.0, "presence_db": 2.5, "compress": True,
                  "deess": True, "mud_db": -2.0, "gain_db": 0.0}
 
 
 @functools.lru_cache(maxsize=1)
-def deepfilter_available() -> bool:
+def _onnxruntime_ok() -> bool:
     try:
-        from df.enhance import enhance, init_df  # type: ignore  # noqa: F401
+        import onnxruntime  # noqa: F401
 
         return True
     except Exception:
         return False
 
 
-_df_state: dict = {}
+def deepfilter_available() -> bool:
+    """Bez cache: po pobraniu wag z panelu Modele DeepFilterNet włącza się bez restartu serwera."""
+    from . import dfnet
+
+    return _onnxruntime_ok() and dfnet.installed()
 
 
 def load_deepfilter():
-    if "m" not in _df_state:
-        from df.enhance import init_df  # type: ignore
+    from . import dfnet
 
-        model, state, _ = init_df(model_base_dir="DeepFilterNet3", log_level="ERROR")
-        _df_state["m"] = (model, state)
-    return _df_state["m"]
+    return dfnet.get_model()
 
 
 def _deepfilter(audio48: np.ndarray, strength: float) -> np.ndarray:
-    import torch
-    from df.enhance import enhance  # type: ignore
-
-    model, state = load_deepfilter()
-    with torch.inference_mode():
-        out = enhance(model, state, torch.from_numpy(audio48[None, :].astype(np.float32)),
-                      atten_lim_db=12 + 18 * strength)
-    return out[0].cpu().numpy().astype(np.float32)
+    return load_deepfilter().enhance(audio48, atten_lim_db=12 + 18 * strength)
 
 
 def rnnoise_model() -> Path | None:
@@ -74,7 +69,69 @@ def noise_profile(media_path: str) -> dict:
     return {"noise_db": round(noise, 1), "speech_db": round(speech, 1), "snr": round(speech - noise, 1)}
 
 
-def build_filter(chain: dict, effort: str, prof: dict, use_df: bool) -> str:
+ACCESS_VIOLATION = 3221225477  # 0xC0000005: losowa awaria arnndn w FFmpeg 9.0.2 na Windows
+MAX_DELAY_S = 0.15
+
+
+def measure_delay(ref: np.ndarray, out: np.ndarray, sr: int, max_s: float = MAX_DELAY_S) -> int | None:
+    """Opóźnienie `out` względem `ref` w próbkach (dodatnie = `out` spóźniony).
+
+    Korelacja na 4 najgłośniejszych 2-sekundowych fragmentach; wynik to mediana fragmentów
+    z wyraźnym szczytem (znormalizowana korelacja > 0,3). None, gdy nie da się jej wiarygodnie ustalić.
+    """
+    from scipy.signal import correlate
+
+    n = min(len(ref), len(out))
+    win, max_lag, neg = 2 * sr, int(max_s * sr), int(0.01 * sr)
+    if n < win + max_lag:
+        win = n - max_lag - neg
+        if win < sr // 4:
+            return None
+    hop = sr
+    starts = np.arange(0, n - win - max_lag + 1, hop)
+    if len(starts) == 0:
+        return None
+    energy = np.array([float(np.dot(ref[s:s + win], ref[s:s + win])) for s in starts])
+    if energy.max() <= 1e-8:
+        return None
+    padded = np.concatenate([np.zeros(neg, np.float32), out[:n]])
+    lags = []
+    for s in starts[np.argsort(energy)[::-1][:4]]:
+        r = ref[s:s + win].astype(np.float64)
+        o = padded[s: s + neg + win + max_lag].astype(np.float64)  # o[k] = out[s - neg + k]
+        c = correlate(o, r, mode="valid", method="fft")
+        k = int(np.argmax(c))
+        seg = o[k: k + win]
+        score = c[k] / (np.linalg.norm(r) * np.linalg.norm(seg) + 1e-12)
+        if score > 0.3:
+            lags.append(k - neg)
+    return int(np.median(lags)) if lags else None
+
+
+def nominal_delay(flt: str, sr: int = 48000) -> int:
+    """Zapasowe oszacowanie opóźnienia łańcucha (zmierzone na FFmpeg 9.0.2, 48 kHz)."""
+    d = 0
+    if "arnndn=" in flt:
+        d += 480
+    if "afftdn=" in flt:
+        d += int(0.025 * sr)
+    if "alimiter=" in flt:
+        d += int(0.003 * sr)
+    return d
+
+
+def shift_and_fit(a: np.ndarray, lag: int, n: int) -> np.ndarray:
+    """Cofa sygnał o `lag` próbek i dopasowuje długość do `n` (dopełnienie zerami)."""
+    if lag > 0:
+        a = a[lag:]
+    elif lag < 0:
+        a = np.concatenate([np.zeros(-lag, np.float32), a])
+    if len(a) >= n:
+        return a[:n].astype(np.float32, copy=False)
+    return np.concatenate([a, np.zeros(n - len(a), np.float32)])
+
+
+def build_filter(chain: dict, effort: str, prof: dict, use_df: bool, rnnoise: bool = True) -> str:
     c = {**DEFAULT_CHAIN, **(chain or {})}
     f: list[str] = []
     hp = float(c.get("highpass") or 0)
@@ -96,10 +153,10 @@ def build_filter(chain: dict, effort: str, prof: dict, use_df: bool) -> str:
     rn = rnnoise_model()
     has = filters()
     if den != "off" and not use_df:
-        if rn is not None and "arnndn" in has:
+        if rnnoise and rn is not None and "arnndn" in has:
             mix = 0.75 if den == "light" else 1.0
             f.append(f"arnndn=m='{escape_filter_path(rn)}':mix={mix}")
-        if "afftdn" in has and (den == "strong" or effort in ("high", "max")):
+        if "afftdn" in has and (den == "strong" or effort in ("high", "max") or not rnnoise):
             nr = 6 if den == "light" else 10
             nf = float(np.clip(noise_after, -80, -25))
             f.append(f"afftdn=nr={nr}:nf={nf:.0f}:tn=1:om=o")
@@ -142,7 +199,7 @@ def clean_voice(media_path: str, out_wav: Path, *, chain: dict, effort: str = "h
         prof = noise_profile(media_path)
         flt = build_filter(c, effort, prof, use_df)
         out_wav.parent.mkdir(parents=True, exist_ok=True)
-        tmp = out_wav.with_name(out_wav.stem + ".part.wav")
+        tmp = out_wav.with_name(out_wav.stem + ".ff.wav")
         dur = float(media_info(media_path).get("duration") or 0) or None
         src = str(media_path)
         if use_df:
@@ -159,13 +216,43 @@ def clean_voice(media_path: str, out_wav: Path, *, chain: dict, effort: str = "h
                 log("sound", f"DeepFilterNet nie zadziałał ({e}) - używam RNNoise", path="Czyszczenie głosu",
                     level="warn")
                 flt = build_filter(c, effort, prof, False)
-        run(["-i", src, "-vn", "-map", "0:a:0", "-af", flt, "-ac", "1", "-ar", "48000", "-c:a", "pcm_f32le",
-             str(tmp)], duration=dur)
-        os.replace(tmp, out_wav)
-        if src != str(media_path):
+        from ..media.ffmpeg import FFmpegError, read_audio
+
+        from . import write_wav
+
+        for attempt in range(4):
             try:
-                os.remove(src)
-            except OSError:
-                pass
-        side.write_text(json.dumps({"key": key, "filter": flt, "profile": prof}, ensure_ascii=False), encoding="utf-8")
+                run(["-i", src, "-vn", "-map", "0:a:0", "-af", flt, "-ac", "1", "-ar", "48000", "-c:a", "pcm_f32le",
+                     str(tmp)], duration=dur)
+                break
+            except FFmpegError as e:
+                if e.returncode != ACCESS_VIOLATION or "arnndn=" not in flt:
+                    raise
+                if attempt < 2:
+                    log("sound", "RNNoise (arnndn) przerwał FFmpeg - ponawiam", path="Czyszczenie głosu", level="warn")
+                    continue
+                log("sound", "RNNoise (arnndn) wciąż zawodzi - czyszczę bez niego (afftdn)", path="Czyszczenie głosu",
+                    level="warn")
+                flt = build_filter(c, effort, prof, False, rnnoise=False)
+        y, _ = load_wav(tmp, sr_expected=48000)
+        bad = ~np.isfinite(y)
+        n_bad = int(bad.sum())
+        if n_bad:
+            y[bad] = 0.0  # arnndn zostawia NaN w ostatniej ramce
+        # filtry (arnndn ~10 ms, afftdn ~25 ms, alimiter 3 ms) opóźniają dźwięk względem obrazu - cofamy go
+        ref = read_audio(media_path, sr=48000, mono=True, duration=240.0)
+        lag = measure_delay(ref, y, 48000)
+        measured = lag is not None
+        if lag is None:
+            lag = nominal_delay(flt)
+        write_wav(out_wav, shift_and_fit(y, lag, len(y)), 48000)
+        for f in (tmp, Path(src) if src != str(media_path) else None):
+            if f is not None:
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
+        side.write_text(json.dumps({"key": key, "filter": flt, "profile": prof, "delay_samples": lag,
+                                    "delay_measured": measured, "nan_samples_fixed": n_bad}, ensure_ascii=False),
+                        encoding="utf-8")
     return out_wav

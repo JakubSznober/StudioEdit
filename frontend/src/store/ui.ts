@@ -19,7 +19,11 @@ interface UIState {
   bottomTab: BottomTab;
   focusGroup: string | null;
   wizardOpen: boolean;
+  /** 'form' = nowy montaż (brief), 'progress' = podgląd trwającego montażu */
+  wizardMode: 'form' | 'progress';
   pipelineGroup: string | null;
+  /** projekt, do którego należy pipelineGroup (pasek postępu nie przechodzi między projektami) */
+  pipelineProject: string | null;
   logAgent: string | null;
 }
 
@@ -57,7 +61,9 @@ export const useUI = create<UIState>(() => ({
   bottomTab: read<BottomTab>('bottomTab', 'stream'),
   focusGroup: null,
   wizardOpen: false,
+  wizardMode: 'form',
   pipelineGroup: read<string | null>('pipelineGroup', null),
+  pipelineProject: read<string | null>('pipelineProject', null),
   logAgent: null,
 }));
 
@@ -98,12 +104,14 @@ export const ui = {
     useUI.setState({ focusGroup: group });
     if (group) ui.setBottom(true, tab);
   },
-  openWizard(open = true) {
-    useUI.setState({ wizardOpen: open });
+  /** Domyślnie formularz nowego montażu; 'progress' tylko z paska „Montaż w toku”. */
+  openWizard(open = true, mode: 'form' | 'progress' = 'form') {
+    useUI.setState(open ? { wizardOpen: true, wizardMode: mode } : { wizardOpen: false });
   },
-  setPipeline(group: string | null) {
+  setPipeline(group: string | null, projectId: string | null = null) {
     write('pipelineGroup', group);
-    useUI.setState({ pipelineGroup: group });
+    write('pipelineProject', group ? projectId : null);
+    useUI.setState({ pipelineGroup: group, pipelineProject: group ? projectId : null });
   },
   setLogAgent(a: string | null) {
     useUI.setState({ logAgent: a });

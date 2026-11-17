@@ -73,7 +73,12 @@ def montage(project, opts: dict) -> str:
         from .agents import colorist
 
         tl = p.timeline()
-        return colorist.auto_grade_tasks(p, tl, look=look or tl.look or tl.plan.get("look"), group=group, deps=[])
+        from .color.looks import look_exists, normalize_look
+        from .edit import styles
+
+        cands = [look, tl.look, tl.plan.get("look"), styles.get(opts.get("style") or p.meta.style)["look"]]
+        chosen = next((c for c in cands if c and normalize_look(c) and look_exists(c)), None)
+        return colorist.auto_grade_tasks(p, tl, look=chosen, group=group, deps=[])
 
     def build_sound(p):
         from .agents import sound

@@ -123,9 +123,11 @@ def render_size(variant: Variant, settings: dict | None, quality: str) -> tuple[
     """Rozmiar klatki renderu (plastrów) dla wariantu, jakości i ustawień."""
     w, h = int(variant.width or 1920), int(variant.height or 1080)
     if quality == "preview":
+        # krótszy bok = preview_height: 16:9 → 1280x720, 9:16 → 720x1280 (nie 404x720, które było rozmyte)
         ph = int(get_config().get("render.preview_height", 720) or 720)
-        if h > ph:
-            return _even(w * ph / h), _even(ph)
+        if min(w, h) > ph:
+            k = ph / min(w, h)
+            return _even(w * k), _even(h * k)
         return _even(w), _even(h)
     res = (settings or {}).get("resolution") or "source"
     short = RESOLUTIONS.get(str(res).lower())

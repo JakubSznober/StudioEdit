@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import threading
 from pathlib import Path
 
 import cv2
@@ -46,43 +47,47 @@ def detect_shots(path: str, duration: float, *, frame_skip: int = 0, min_shot: f
     return out
 
 
-_face_det = None
-_face_kind = ""
+# Detektor jest osobny dla każdego wątku: Archiwista analizuje kilka plików równolegle, a wspólny
+# FaceDetectorYN zmieniał rozmiar wejścia (setInputSize) w trakcie detect() innego wątku → asercja
+# OpenCV „buf.shape() == m.shape()” i utrata analizy całego pliku. CascadeClassifier też nie jest
+# bezpieczny wątkowo.
+_face_tls = threading.local()
 
 
 def _init_face():
     """YuNet (OpenCV DNN, model w AI-Models\\weights\\face) lub kaskada Haara (OpenCV < 5)."""
-    global _face_det, _face_kind
-    if _face_kind:
+    if getattr(_face_tls, "kind", ""):
         return
     from .. import paths
 
     cands = sorted((paths.WEIGHTS / "face").glob("face_detection_yunet*.onnx")) if (paths.WEIGHTS / "face").exists() else []
     if cands and hasattr(cv2, "FaceDetectorYN"):
         try:
-            _face_det = cv2.FaceDetectorYN.create(str(cands[-1]), "", (320, 320), 0.7, 0.3, 50)
-            _face_kind = "yunet"
+            _face_tls.det = cv2.FaceDetectorYN.create(str(cands[-1]), "", (320, 320), 0.7, 0.3, 50)
+            _face_tls.kind = "yunet"
             return
         except Exception:
             pass
     if hasattr(cv2, "CascadeClassifier") and hasattr(cv2, "data"):
-        _face_det = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-        _face_kind = "haar"
+        _face_tls.det = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        _face_tls.kind = "haar"
         return
-    _face_kind = "none"
+    _face_tls.det = None
+    _face_tls.kind = "none"
 
 
 def _faces(gray: np.ndarray, rgb: np.ndarray | None = None) -> list[tuple[int, int, int, int]]:
     _init_face()
-    if _face_kind == "yunet" and rgb is not None:
+    det, kind = _face_tls.det, _face_tls.kind
+    if kind == "yunet" and rgb is not None:
         h, w = rgb.shape[:2]
-        _face_det.setInputSize((w, h))
-        _ok, res = _face_det.detect(cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
+        det.setInputSize((w, h))
+        _ok, res = det.detect(cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
         if res is None:
             return []
         return [tuple(int(v) for v in r[:4]) for r in res]
-    if _face_kind == "haar":
-        found = _face_det.detectMultiScale(gray, scaleFactor=1.15, minNeighbors=5, minSize=(24, 24))
+    if kind == "haar":
+        found = det.detectMultiScale(gray, scaleFactor=1.15, minNeighbors=5, minSize=(24, 24))
         return [tuple(map(int, f)) for f in found] if len(found) else []
     return []
 

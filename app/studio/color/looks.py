@@ -29,11 +29,37 @@ BUILTIN: list[dict] = [
      "description": "Soczyste kolory (vibrance), jaśniej i bardziej kontrastowo - pod telefon i rolki."},
     {"id": "pastel", "name": "Pastelowy",
      "description": "Jasny, miękki obraz o niskim kontraście i delikatnych, pudrowych barwach."},
+    {"id": "golden_hour", "name": "Złota godzina",
+     "description": "Ciepłe, miodowe światło jak tuż przed zachodem słońca - podróże, lifestyle, wspomnienia."},
+    {"id": "high_key", "name": "Jasny i czysty (high-key)",
+     "description": "Jasno, czyste biele, łagodne cienie i świeże kolory - reklama, produkt, poradnik."},
+    {"id": "portrait_soft", "name": "Portretowy (miękka skóra)",
+     "description": "Ciepła, naturalna skóra, łagodny kontrast i stonowane zielenie - śluby, wydarzenia, portrety."},
+    {"id": "nature_vivid", "name": "Soczysta natura",
+     "description": "Podbite zielenie i błękit nieba przy naturalnej skórze - krajobrazy, góry, morze."},
+    {"id": "matte_fade", "name": "Matowy (fade)",
+     "description": "Podniesiona czerń i lekko chłodne cienie - estetyczny, „instagramowy” wygląd."},
+    {"id": "vintage_70s", "name": "Retro lata 70.",
+     "description": "Wyblakła czerń, ciepłe żółcie i zielonkawe cienie jak na starej taśmie."},
+    {"id": "cold_thriller", "name": "Chłodny thriller",
+     "description": "Zielono-niebieski, odbarwiony obraz z mocnym kontrastem - napięcie, kryminał."},
+    {"id": "bleach_bypass", "name": "Bleach bypass",
+     "description": "Srebrzysty, surowy obraz: mało koloru, dużo kontrastu - sport, akcja, wojna."},
+    {"id": "neon_night", "name": "Neonowa noc",
+     "description": "Nasycone magenty i cyjany w ciemniejszym obrazie - miasto nocą, teledysk, gaming."},
+    {"id": "noir", "name": "Noir",
+     "description": "Czarno-biały o bardzo mocnym kontraście i głębokiej czerni - kryminał, dramat."},
+    {"id": "sepia", "name": "Sepia",
+     "description": "Brązowy monochrom jak stara fotografia - wspomnienia, retrospekcje."},
 ]
 BUILTIN_IDS = {b["id"] for b in BUILTIN}
-MONOCHROME = {"bw_film", "bw"}
+MONOCHROME = {"bw_film", "bw", "noir", "sepia"}
 ALIASES = {"bw": "bw_film", "teal-orange": "teal_orange", "tealorange": "teal_orange", "film": "warm_film",
-           "doc": "clean_doc", "natural": "clean_doc", "vibrant": "vibrant_social", "social": "vibrant_social"}
+           "doc": "clean_doc", "natural": "clean_doc", "vibrant": "vibrant_social", "social": "vibrant_social",
+           "golden": "golden_hour", "zlota_godzina": "golden_hour", "złota_godzina": "golden_hour",
+           "highkey": "high_key", "high-key": "high_key", "portrait": "portrait_soft", "nature": "nature_vivid",
+           "matte": "matte_fade", "fade": "matte_fade", "retro": "vintage_70s", "vintage": "vintage_70s",
+           "thriller": "cold_thriller", "bleach": "bleach_bypass", "neon": "neon_night"}
 
 
 def luts_dir() -> Path:
@@ -200,8 +226,101 @@ def _pastel(rgb):
     return 0.07 + x * 0.905
 
 
+def _tint(rgb, mul):
+    """Mnożenie kanałów z zachowaniem luminancji (balans barw bez zmiany jasności)."""
+    m = np.array(mul, dtype=float)
+    return rgb * m / max(1e-6, float(np.dot(m, LUMA)))
+
+
+def _golden_hour(rgb):
+    x = _tint(rgb, (1.06, 1.0, 0.86))
+    x = split_tone(x, (0.02, 0.006, -0.02), (0.045, 0.015, -0.05))
+    x = saturate(x, 1.06)
+    x = pivot_curve(x, 1.05)
+    return 0.012 + x * 0.965
+
+
+def _high_key(rgb):
+    x = np.power(np.clip(rgb, 0, 1), 0.86)
+    x = saturate(x, 1.05)
+    x = pivot_curve(x, 0.94)
+    return 0.015 + x * 0.985
+
+
+def _portrait_soft(rgb):
+    x = _tint(rgb, (1.025, 1.0, 0.965))
+    h, s, v = _rgb2hsv(np.clip(x, 0, 1))
+    hd = h * 360
+    green = np.exp(-((((hd - 120 + 180) % 360) - 180) / 35.0) ** 2)
+    x = saturate(x, 0.98 - 0.18 * green)
+    x = pivot_curve(x, 0.95)
+    return 0.02 + x * 0.97
+
+
+def _nature_vivid(rgb):
+    h, s, v = _rgb2hsv(np.clip(rgb, 0, 1))
+    hd = h * 360
+    green = np.exp(-((((hd - 115 + 180) % 360) - 180) / 40.0) ** 2)
+    sky = np.exp(-((((hd - 210 + 180) % 360) - 180) / 30.0) ** 2)
+    x = saturate(rgb, 1.04 + 0.28 * green + 0.2 * sky)
+    return pivot_curve(x, 1.06)
+
+
+def _matte_fade(rgb):
+    x = saturate(rgb, 0.9)
+    x = split_tone(x, (-0.012, 0.0, 0.022), (0.012, 0.006, -0.008))
+    x = pivot_curve(x, 1.04)
+    return 0.075 + x * 0.89
+
+
+def _vintage_70s(rgb):
+    x = saturate(rgb, 0.8)
+    x = _tint(x, (1.04, 1.02, 0.88))
+    x = split_tone(x, (-0.012, 0.02, -0.004), (0.03, 0.02, -0.045))
+    x = pivot_curve(x, 0.96)
+    return 0.06 + x * 0.88
+
+
+def _cold_thriller(rgb):
+    x = _tint(rgb, (0.93, 1.02, 1.05))
+    x = saturate(x, 0.68)
+    x = split_tone(x, (-0.02, 0.022, 0.026), (-0.008, 0.008, 0.012))
+    return pivot_curve(x, 1.22)
+
+
+def _bleach_bypass(rgb):
+    x = saturate(rgb, 0.45)
+    return pivot_curve(x, 1.32)
+
+
+def _neon_night(rgb):
+    h, s, v = _rgb2hsv(np.clip(rgb, 0, 1))
+    vib = 1.0 + 0.35 * (1.0 - s)
+    x = saturate(rgb, 1.18 * vib)
+    x = split_tone(x, (0.035, -0.03, 0.05), (-0.035, 0.02, 0.04))
+    x = np.power(np.clip(x, 0, 1), 1.08)
+    return pivot_curve(x, 1.12)
+
+
+def _noir(rgb):
+    y = rgb @ np.array([0.3, 0.59, 0.11])
+    y = pivot_curve(y, 1.45)
+    y = np.power(np.clip(y, 0, 1), 1.08)
+    return np.repeat(y[:, None], 3, axis=1)
+
+
+def _sepia(rgb):
+    y = pivot_curve(rgb @ LUMA, 1.08)
+    tone = np.array([1.08, 0.99, 0.80])
+    out = y[:, None] * tone / float(np.dot(tone, LUMA))
+    return 0.015 + np.clip(out, 0, 1) * 0.965
+
+
 _FUNCS = {"teal_orange": _teal_orange, "warm_film": _warm_film, "clean_doc": _clean_doc, "moody": _moody,
-          "bw_film": _bw_film, "vibrant_social": _vibrant_social, "pastel": _pastel}
+          "bw_film": _bw_film, "vibrant_social": _vibrant_social, "pastel": _pastel, "golden_hour": _golden_hour,
+          "high_key": _high_key, "portrait_soft": _portrait_soft, "nature_vivid": _nature_vivid,
+          "matte_fade": _matte_fade, "vintage_70s": _vintage_70s, "cold_thriller": _cold_thriller,
+          "bleach_bypass": _bleach_bypass, "neon_night": _neon_night, "noir": _noir, "sepia": _sepia}
 
 
 # ---------------------------------------------------------------------------------------------

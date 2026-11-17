@@ -13,12 +13,33 @@ import {
   TRANSITION_LABEL,
 } from '../../lib/constants';
 import { clamp, cx, tc } from '../../lib/format';
-import { Clapperboard, Maximize2, Redo2, Repeat, Scissors, Undo2, WandSparkles, X } from '../../lib/icons';
+import { isTypingTarget } from '../../lib/hooks';
+import { Clapperboard, Eye, EyeOff, Maximize2, Redo2, Repeat, Scissors, Undo2, Volume2, VolumeX, WandSparkles, X } from '../../lib/icons';
 import { player, usePlayer } from '../../store/player';
-import { useProject } from '../../store/project';
+import { project, useProject } from '../../store/project';
 import { ui } from '../../store/ui';
 import type { AClip, AnyClip, MediaItem, TitleClip, Transition, VClip } from '../../types';
 import { Badge, Button, IconButton, Tip } from '../ui';
+import { errMsg } from '../../api/client';
+import { projects as P } from '../../api/endpoints';
+import { clipDescription } from '../../lib/clipinfo';
+import { applyEdit, ClipInspector } from './ClipInspector';
+
+type EditKind = 'move' | 'in' | 'out';
+interface ClipDrag {
+  kind: EditKind;
+  track: string;
+  clip: AnyClip;
+  x0: number;
+  moved: boolean;
+}
+interface Ghost {
+  id: string;
+  track: string;
+  kind: EditKind;
+  dt: number;
+}
+const SNAP_PX = 8;
 
 const PAD = 10;
 const RULER_H = 30;
@@ -99,6 +120,10 @@ export function TimelinePanel({ onUndo, onRedo }: { onUndo: () => void; onRedo: 
   const contentW = Math.max(viewW, duration * zoom + PAD * 2 + 40);
   const [hover, setHover] = useState<Hover | null>(null);
   const drag = useRef<DragMode>(null);
+  const pid = useProject((s) => s.activeId);
+  const [sel, setSel] = useState<{ track: string; id: string } | null>(null);
+  const [ghost, setGhost] = useState<Ghost | null>(null);
+  const clipDrag = useRef<ClipDrag | null>(null);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -166,6 +191,7 @@ export function TimelinePanel({ onUndo, onRedo }: { onUndo: () => void; onRedo: 
   };
   const onTracksDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
+    setSel(null);
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     const t = tAt(e.clientX);
     if (e.shiftKey) {
@@ -233,6 +259,149 @@ export function TimelinePanel({ onUndo, onRedo }: { onUndo: () => void; onRedo: 
   const x = (t: number) => PAD + t * zoom;
   const inView = (s: number, e: number) => x(e) >= scrollLeft - 200 && x(s) <= scrollLeft + viewW + 200;
 
+  // ---------------------------------------------------------------- ukrywanie / wyciszanie ścieżek
+  const trackOff = (k: string) => {
+    const st = tl?.track_state?.[k];
+    return !!(st?.hidden || st?.muted);
+  };
+  const toggleTrack = async (k: string) => {
+    if (!pid) return;
+    const off = !trackOff(k);
+    try {
+      const t = await P.trackState(pid, k, isV(k) ? { hidden: off } : { muted: off });
+      project.setTimeline(t);
+      project.loadVersions();
+    } catch (e) {
+      ui.toast(errMsg(e), 'error');
+    }
+  };
+
+  // ---------------------------------------------------------------- ręczna edycja klipów
+  const v1Sorted = useMemo(() => [...v1].sort((a, b) => a.start - b.start), [v1]);
+  const selClip = useMemo(() => {
+    if (!sel) return null;
+    const c = ((tracks[sel.track] || []) as AnyClip[]).find((x) => x.id === sel.id);
+    return c || null;
+  }, [sel, tracks]);
+  useEffect(() => {
+    if (sel && !selClip) setSel(null);
+  }, [sel, selClip]);
+
+  /** Przyciąganie do głowicy, cięć V1 i krawędzi klipów (w odległości SNAP_PX). */
+  const snap = (t: number, ignoreId: string) => {
+    const cands = [0, time, ...cuts, ...v1.map((c) => clipEnd(c))];
+    for (const k of TRACKS)
+      for (const c of (tracks[k] || []) as AnyClip[]) if (c.id !== ignoreId) cands.push(c.start, clipEnd(c));
+    let best = t;
+    let bd = SNAP_PX / zoom;
+    for (const c of cands) {
+      const d = Math.abs(c - t);
+      if (d < bd) {
+        bd = d;
+        best = c;
+      }
+    }
+    return best;
+  };
+
+  /** Indeks wstawienia na V1 dla klipu przeciąganego o dt (środek klipu względem środków pozostałych). */
+  const v1DropIndex = (c: AnyClip, dt: number) => {
+    const mid = (c.start + clipEnd(c)) / 2 + dt;
+    return v1Sorted.filter((o) => o.id !== c.id && (o.start + clipEnd(o)) / 2 < mid).length;
+  };
+
+  const onClipDown = (track: string, c: AnyClip, kind: EditKind) => (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    clipDrag.current = { kind, track, clip: c, x0: e.clientX, moved: false };
+    setSel({ track, id: c.id });
+  };
+  const onClipMove = (e: React.PointerEvent) => {
+    const d = clipDrag.current;
+    if (!d) return;
+    e.stopPropagation();
+    if (!d.moved && Math.abs(e.clientX - d.x0) < 4) return;
+    d.moved = true;
+    setHover(null);
+    let dt = (e.clientX - d.x0) / zoom;
+    const s = d.clip.start;
+    const en = clipEnd(d.clip);
+    if (d.kind === 'move' && d.track !== 'V1') {
+      const ns = snap(s + dt, d.clip.id);
+      const ne = snap(en + dt, d.clip.id);
+      dt = Math.abs(ns - (s + dt)) <= Math.abs(ne - (en + dt)) ? ns - s : ne - en;
+      dt = Math.max(-s, dt);
+    } else if (d.kind === 'out') {
+      dt = snap(en + dt, d.clip.id) - en;
+      dt = Math.max(dt, 0.1 - (en - s));
+    } else if (d.kind === 'in') {
+      dt = snap(s + dt, d.clip.id) - s;
+      dt = Math.min(dt, en - s - 0.1);
+    }
+    setGhost({ id: d.clip.id, track: d.track, kind: d.kind, dt });
+  };
+  const onClipUp = async (e: React.PointerEvent) => {
+    const d = clipDrag.current;
+    clipDrag.current = null;
+    e.stopPropagation();
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignoruj */
+    }
+    const g = ghost;
+    setGhost(null);
+    if (!d || !d.moved || !g || !pid || Math.abs(g.dt) < 1e-4) return;
+    if (d.kind === 'move' && d.track === 'V1') {
+      const cur = v1Sorted.findIndex((c) => c.id === d.clip.id);
+      const to = v1DropIndex(d.clip, g.dt);
+      if (to !== cur) await applyEdit(pid, { op: 'reorder', clip_id: d.clip.id, index: to });
+    } else if (d.kind === 'move') {
+      await applyEdit(pid, { op: 'move', clip_id: d.clip.id, start: Math.max(0, d.clip.start + g.dt) });
+    } else {
+      await applyEdit(pid, { op: 'trim', clip_id: d.clip.id, edge: d.kind, delta: g.dt });
+    }
+  };
+
+  // Delete / Backspace = usuń zaznaczony klip, Esc = odznacz
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!sel || isTypingTarget(e.target) || document.querySelector('[role="dialog"]')) return;
+      if (e.key === 'Escape') {
+        setSel(null);
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && pid) {
+        e.preventDefault();
+        applyEdit(pid, { op: 'delete', clip_id: sel.id });
+        setSel(null);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [sel, pid]);
+
+  /** Położenie klipu z uwzględnieniem podglądu przeciągania. */
+  const shown = (track: string, c: AnyClip): [number, number] => {
+    const s = c.start;
+    const e = clipEnd(c);
+    if (!ghost || ghost.id !== c.id) return [s, e];
+    if (ghost.kind === 'move') return [s + ghost.dt, e + ghost.dt];
+    if (ghost.kind === 'out') return [s, e + ghost.dt];
+    return track === 'V1' ? [s, e - ghost.dt] : [s + ghost.dt, e];
+  };
+  const dropLine =
+    ghost && ghost.kind === 'move' && ghost.track === 'V1'
+      ? (() => {
+          const c = v1Sorted.find((o) => o.id === ghost.id);
+          if (!c) return null;
+          const others = v1Sorted.filter((o) => o.id !== c.id);
+          const i = v1DropIndex(c, ghost.dt);
+          const t = i < others.length ? others[i].start : others.length ? clipEnd(others[others.length - 1]) : 0;
+          // wizualnie: przed pierwszym klipem ze środkiem dalej niż przeciągany
+          return t;
+        })()
+      : null;
+
   const zoomSlider = Math.round((Math.log(zoom / fitPps) / Math.log(Math.max(1.0001, MAX_PPS / fitPps))) * 100);
   const setZoomSlider = (v: number) => {
     const el = scrollRef.current;
@@ -298,12 +467,30 @@ export function TimelinePanel({ onUndo, onRedo }: { onUndo: () => void; onRedo: 
           <div style={{ height: RULER_H }} className="flex items-center border-b border-border px-2.5">
             <span className="tabular text-[11px] font-semibold text-accent">{tc(time, fps)}</span>
           </div>
-          {TRACKS.map((k) => (
-            <div key={k} style={{ height: TRACK_H[k] }} className={cx('flex items-center gap-1.5 border-b border-border/70 px-2.5', isV(k) ? 'bg-track-alt' : 'bg-track')}>
-              <span className={cx('w-6 text-[11px] font-bold', isV(k) ? 'text-accent' : 'text-success')}>{k}</span>
-              <span className="truncate text-[10.5px] text-muted">{TRACK_LABEL[k]}</span>
-            </div>
-          ))}
+          {TRACKS.map((k) => {
+            const off = trackOff(k);
+            const canToggle = k !== 'V1';
+            const Icon = isV(k) ? (off ? EyeOff : Eye) : off ? VolumeX : Volume2;
+            const label = isV(k) ? (off ? `Pokaż ścieżkę ${k}` : `Ukryj ścieżkę ${k}`) : off ? `Włącz dźwięk ścieżki ${k}` : `Wycisz ścieżkę ${k}`;
+            return (
+              <div key={k} style={{ height: TRACK_H[k] }} className={cx('flex items-center gap-1 border-b border-border/70 pr-1 pl-2.5', isV(k) ? 'bg-track-alt' : 'bg-track')}>
+                <span className={cx('w-6 shrink-0 text-[11px] font-bold', off ? 'text-subtle line-through' : isV(k) ? 'text-accent' : 'text-success')}>{k}</span>
+                <span className={cx('min-w-0 flex-1 truncate text-[10.5px]', off ? 'text-subtle' : 'text-muted')}>{TRACK_LABEL[k]}</span>
+                {canToggle && (
+                  <Tip text={`${label} (nie trafi do podglądu ani eksportu)`} side="right">
+                    <button
+                      className={cx('shrink-0 rounded p-0.5 cursor-pointer hover:bg-surface-3', off ? 'text-danger' : 'text-subtle hover:text-text')}
+                      onClick={() => toggleTrack(k)}
+                      aria-label={label}
+                      aria-pressed={off}
+                    >
+                      <Icon size={12} />
+                    </button>
+                  </Tip>
+                )}
+              </div>
+            );
+          })}
         </div>
 
         {/* obszar przewijany */}
@@ -387,10 +574,9 @@ export function TimelinePanel({ onUndo, onRedo }: { onUndo: () => void; onRedo: 
                 const items = (tracks[k] || []) as AnyClip[];
                 const h = TRACK_H[k];
                 return (
-                  <div key={k} className={cx('relative border-b border-border/70', isV(k) ? 'bg-track-alt' : 'bg-track')} style={{ height: h }}>
+                  <div key={k} className={cx('relative border-b border-border/70', isV(k) ? 'bg-track-alt' : 'bg-track', trackOff(k) && 'opacity-35 grayscale')} style={{ height: h }}>
                     {items.map((c) => {
-                      const s = c.start;
-                      const e = clipEnd(c);
+                      const [s, e] = shown(k, c);
                       if (!inView(s, e)) return null;
                       const role = clipRole(k, c);
                       const color = ROLE_COLOR[role] || '#7c5cff';
@@ -398,10 +584,18 @@ export function TimelinePanel({ onUndo, onRedo }: { onUndo: () => void; onRedo: 
                       const vc = c as VClip;
                       const speed = !isTitle(c) && isV(k) && vc.speed && Math.abs(vc.speed - 1) > 0.01 ? vc.speed : null;
                       const fx = !isTitle(c) && isV(k) && (vc.effects || []).filter((f) => f.enabled !== false).length;
+                      const selected = sel?.id === c.id;
+                      const dragging = ghost?.id === c.id;
+                      const muted = !isV(k) && ((c as AClip).gain_db ?? 0) <= -60;
                       return (
                         <div
                           key={c.id}
-                          className="absolute top-[3px] bottom-[3px] overflow-hidden rounded-[6px] border transition-[filter] hover:brightness-110"
+                          className={cx(
+                            'absolute top-[3px] bottom-[3px] overflow-hidden rounded-[6px] border transition-[filter] hover:brightness-110',
+                            selected && 'z-20 ring-2 ring-white shadow-[0_0_0_3px_rgba(124,92,255,0.55)]',
+                            dragging ? 'cursor-grabbing opacity-90' : 'cursor-grab',
+                            muted && 'opacity-45',
+                          )}
                           style={{
                             left: x(s),
                             width: w,
@@ -410,18 +604,40 @@ export function TimelinePanel({ onUndo, onRedo }: { onUndo: () => void; onRedo: 
                               : `repeating-linear-gradient(90deg, color-mix(in oklab, ${color} 70%, transparent) 0 2px, color-mix(in oklab, ${color} 45%, transparent) 2px 4px)`,
                             borderColor: `color-mix(in oklab, ${color} 70%, #000)`,
                           }}
-                          onMouseMove={(ev) => setHover({ track: k, clip: c, x: ev.clientX, y: ev.clientY })}
+                          onPointerDown={onClipDown(k, c, 'move')}
+                          onPointerMove={onClipMove}
+                          onPointerUp={onClipUp}
+                          onMouseMove={(ev) => !clipDrag.current && setHover({ track: k, clip: c, x: ev.clientX, y: ev.clientY })}
                           onMouseLeave={() => setHover(null)}
                           onDoubleClick={(ev) => {
                             ev.stopPropagation();
                             player.setRange({ in: s, out: e });
                           }}
                         >
+                          {selected && w > 16 && (
+                            <>
+                              <div
+                                className="absolute top-0 left-0 z-10 h-full w-[7px] cursor-ew-resize bg-white/70 hover:bg-white"
+                                title="Przeciągnij, aby przyciąć początek"
+                                onPointerDown={onClipDown(k, c, 'in')}
+                                onPointerMove={onClipMove}
+                                onPointerUp={onClipUp}
+                              />
+                              <div
+                                className="absolute top-0 right-0 z-10 h-full w-[7px] cursor-ew-resize bg-white/70 hover:bg-white"
+                                title="Przeciągnij, aby przyciąć koniec"
+                                onPointerDown={onClipDown(k, c, 'out')}
+                                onPointerMove={onClipMove}
+                                onPointerUp={onClipUp}
+                              />
+                            </>
+                          )}
                           {w > 26 && (
                             <div className={cx('flex h-full items-center gap-1 px-1.5 text-[10.5px] font-medium whitespace-nowrap', isV(k) ? 'text-white' : 'text-text')}>
                               {fx ? <WandSparkles size={10} className="shrink-0" /> : null}
                               <span className="truncate">{clipLabel(c, media)}</span>
                               {speed && <span className="shrink-0 rounded bg-black/25 px-1 text-[9px]">{Math.round(speed * 100)}%</span>}
+                              {muted && <span className="shrink-0 rounded bg-black/25 px-1 text-[9px]">wycisz.</span>}
                             </div>
                           )}
                         </div>
@@ -454,6 +670,11 @@ export function TimelinePanel({ onUndo, onRedo }: { onUndo: () => void; onRedo: 
                   </div>
                 );
               })}
+
+              {/* miejsce wstawienia przy przeciąganiu na V1 */}
+              {dropLine != null && (
+                <div className="pointer-events-none absolute z-30 w-[3px] -translate-x-1/2 rounded bg-white shadow-[0_0_8px_rgba(255,255,255,0.8)]" style={{ left: x(dropLine), top: 0, height: TRACK_H.V1 }} />
+              )}
 
               {/* linie markerów */}
               {(tl?.markers || []).map((m, i) => (
@@ -488,9 +709,21 @@ export function TimelinePanel({ onUndo, onRedo }: { onUndo: () => void; onRedo: 
             </div>
           </div>
         </div>
+        {sel && selClip && pid && !ghost && (
+          <ClipInspector
+            pid={pid}
+            track={sel.track}
+            clip={selClip}
+            media={media}
+            fps={fps}
+            v1Index={v1Sorted.findIndex((c) => c.id === selClip.id)}
+            v1Count={v1Sorted.length}
+            onClose={() => setSel(null)}
+          />
+        )}
       </div>
 
-      {hover && <ClipTooltip hover={hover} media={media} fps={fps} />}
+      {hover && !ghost && <ClipTooltip hover={hover} media={media} fps={fps} />}
     </div>
   );
 }
@@ -571,6 +804,12 @@ function ClipTooltip({ hover, media, fps }: { hover: Hover; media: Record<string
                 {f.status && f.status !== 'done' ? ` (${f.status})` : ''}
               </span>
             ))}
+          </div>
+        )}
+        {clipDescription(c, media) && (
+          <div className="mt-2 rounded-lg bg-white/[0.06] px-2 py-1.5">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-white/50">{isV(hover.track) ? 'Na klipie' : 'Dźwięk'}</div>
+            <div className="mt-0.5 text-[11.5px] leading-snug text-white/85">{clipDescription(c, media)}</div>
           </div>
         )}
         {(c as VClip).reason && <Reason text={(c as VClip).reason} />}

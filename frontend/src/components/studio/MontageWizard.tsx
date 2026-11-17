@@ -58,7 +58,7 @@ export function stageOf(t: Task): string {
   }
 }
 
-function PipelineProgress({ group, onClose }: { group: string; onClose: () => void }) {
+function PipelineProgress({ group, onClose, onNew }: { group: string; onClose: () => void; onNew?: () => void }) {
   const pid = useProject((s) => s.activeId);
   const tasks = useGroupTasks(group);
   const [pipe, setPipe] = useState<PipelineStatus | null>(null);
@@ -158,6 +158,11 @@ function PipelineProgress({ group, onClose }: { group: string; onClose: () => vo
         </div>
       )}
       <div className="flex justify-end gap-2">
+        {onNew && (
+          <Button variant="ghost" className="mr-auto" icon={Sparkles} onClick={onNew}>
+            Nowy montaż
+          </Button>
+        )}
         <Button variant="ghost" onClick={() => ui.focusGroup(group, 'stream')}>
           Pokaż strumień pracy
         </Button>
@@ -181,10 +186,12 @@ function PipelineProgress({ group, onClose }: { group: string; onClose: () => vo
 
 export function MontageWizard() {
   const open = useUI((s) => s.wizardOpen);
-  const group = useUI((s) => s.pipelineGroup);
+  const mode = useUI((s) => s.wizardMode);
   const pid = useProject((s) => s.activeId);
+  const group = useUI((s) => (s.pipelineProject === pid ? s.pipelineGroup : null));
   const proj = useProject((s) => s.projects.find((p) => p.id === s.activeId));
   const looks = useProject((s) => s.looks);
+  const styleList = useProject((s) => s.styles);
   const mediaCount = useProject((s) => s.media.length);
   const [phase, setPhase] = useState<'form' | 'progress'>('form');
   const [brief, setBrief] = useState('');
@@ -199,7 +206,8 @@ export function MontageWizard() {
   useEffect(() => {
     if (!open) return;
     project.loadLooks();
-    if (group) {
+    project.loadStyles();
+    if (mode === 'progress' && group) {
       setPhase('progress');
       return;
     }
@@ -217,6 +225,9 @@ export function MontageWizard() {
   }, [open]);
 
   const close = () => ui.openWizard(false);
+  const styleOptions = styleList.length ? styleList : STYLES.map((s) => ({ ...s, description: '', rules: [] as string[], look: '', music_mood: '', pace: '' }));
+  const styleInfo = styleList.find((s) => s.key === style);
+  const styleLook = styleInfo ? looks.find((l) => l.id === styleInfo.look) : undefined;
 
   const submit = async () => {
     if (!pid) return;
@@ -232,7 +243,7 @@ export function MontageWizard() {
     setBusy(true);
     try {
       const r = await P.montage(pid, body);
-      ui.setPipeline(r.group);
+      ui.setPipeline(r.group, pid);
       ui.focusGroup(r.group, 'stream');
       setPhase('progress');
       ui.toast('Ekipa rozpoczęła montaż', 'success');
@@ -270,7 +281,7 @@ export function MontageWizard() {
       }
     >
       {phase === 'progress' && group ? (
-        <PipelineProgress group={group} onClose={close} />
+        <PipelineProgress group={group} onClose={close} onNew={() => setPhase('form')} />
       ) : (
         <div className="space-y-5 px-5 py-5">
           {!mediaCount && <div className="rounded-xl bg-warn/10 px-3 py-2 text-[12.5px] text-warn">Projekt nie ma jeszcze materiału — najpierw zaimportuj pliki w panelu Media.</div>}
@@ -293,20 +304,42 @@ export function MontageWizard() {
               ))}
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-[1.4fr_1fr_1fr] gap-3">
+            <Field label="Styl montażu">
+              <Select value={style} onChange={setStyle} options={styleOptions.map((s) => ({ value: s.key, label: s.label }))} />
+            </Field>
             <Field label="Docelowa długość" hint="np. 4:00 lub 60 s">
               <Input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="auto" />
-            </Field>
-            <Field label="Styl">
-              <Select value={style} onChange={setStyle} options={STYLES.map((s) => ({ value: s.key, label: s.label }))} />
             </Field>
             <Field label="Nastrój muzyki">
               <Select value={mood} onChange={setMood} options={MUSIC_MOODS.map((m) => ({ value: m.key, label: m.label }))} />
             </Field>
           </div>
+          {styleInfo && (
+            <div className="rounded-xl border border-border bg-surface-2/60 px-3 py-2.5">
+              <div className="text-[12.5px] leading-snug">{styleInfo.description}</div>
+              {styleInfo.rules?.length > 0 && (
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {styleInfo.rules.map((r) => (
+                    <span key={r} className="rounded-md bg-surface-3 px-1.5 py-0.5 text-[10.5px] text-muted">
+                      {r}
+                    </span>
+                  ))}
+                  {styleLook && <span className="rounded-md bg-accent/10 px-1.5 py-0.5 text-[10.5px] text-accent">look: {styleLook.name}</span>}
+                </div>
+              )}
+            </div>
+          )}
           <div className="grid grid-cols-[1fr_auto] items-end gap-3">
-            <Field label="Look kolorystyczny" hint={looks.find((l) => l.id === look)?.description}>
-              <Select value={look} onChange={setLook} options={[{ value: '', label: 'Automatycznie (Kolorysta dobierze)' }, ...looks.map((l) => ({ value: l.id, label: `${l.name}${l.builtin ? '' : ' (LUT)'}` }))]} />
+            <Field label="Look kolorystyczny" hint={look ? looks.find((l) => l.id === look)?.description : styleLook ? `Automatycznie: ${styleLook.name} — ${styleLook.description}` : undefined}>
+              <Select
+                value={look}
+                onChange={setLook}
+                options={[
+                  { value: '', label: styleLook ? `Automatycznie (styl: ${styleLook.name})` : 'Automatycznie (Kolorysta dobierze)' },
+                  ...looks.map((l) => ({ value: l.id, label: `${l.name}${l.builtin ? '' : ' (LUT)'}` })),
+                ]}
+              />
             </Field>
             <label className="flex h-9 items-center gap-2 rounded-[10px] border border-border px-3 text-[12.5px] font-medium">
               <Captions size={15} className="text-muted" /> Napisy

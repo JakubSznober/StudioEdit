@@ -224,6 +224,13 @@ def api_tasks_cancel(body: dict = Body(...)):
     return {"cancelled": orchestrator.cancel(group=body.get("group"), project_id=body.get("project_id"))}
 
 
+@app.get("/api/styles")
+def api_styles():
+    from ..edit import styles
+
+    return styles.public()
+
+
 @app.get("/api/looks")
 def api_looks():
     try:
@@ -518,6 +525,61 @@ def api_clip_patch(pid: str, clip_id: str, body: dict = Body(...)):
         return tl.normalize()
     tl = p.mutate_timeline(mut, f"Ręczna zmiana klipu {clip_id}", "user")
     return tl.to_json()
+
+
+@app.patch("/api/projects/{pid}/timeline/tracks/{track}")
+def api_track_state(pid: str, track: str, body: dict = Body(...)):
+    """Ukrycie ścieżki wideo / wyciszenie ścieżki audio: {hidden?: bool, muted?: bool}."""
+    if track not in ("V1", "V2", "V3", "A1", "A2", "A3", "A4", "A5"):
+        raise HTTPException(404, "Nieznana ścieżka")
+    if track == "V1" and body.get("hidden"):
+        raise HTTPException(400, "Ścieżki głównej V1 nie można ukryć")
+    p = _proj(pid)
+
+    def mut(tl: Timeline):
+        st = dict(tl.track_state.get(track) or {})
+        for k in ("hidden", "muted"):
+            if k in body:
+                st[k] = bool(body[k])
+        tl.track_state = {**tl.track_state, track: st}
+        return tl
+    off = bool(body.get("hidden") or body.get("muted"))
+    what = ("Ukryto" if track.startswith("V") else "Wyciszono") if off else "Włączono"
+    return p.mutate_timeline(mut, f"{what} ścieżkę {track}", "user").to_json()
+
+
+@app.post("/api/projects/{pid}/timeline/edit")
+def api_timeline_edit(pid: str, body: dict = Body(...)):
+    """Ręczna edycja z osi: {op: reorder|move|trim|delete, clip_id, index?, start?, edge?, delta?}."""
+    from ..edit import ops
+
+    p = _proj(pid)
+    op, cid = str(body.get("op", "")), str(body.get("clip_id", ""))
+    media = {m.id: m for m in p.media()}
+    labels = {"reorder": "Zmiana kolejności klipu", "move": "Przesunięcie klipu", "trim": "Przycięcie klipu",
+              "delete": "Usunięcie klipu"}
+    if op not in labels:
+        raise HTTPException(400, f"Nieznana operacja: {op}")
+
+    def mut(tl: Timeline):
+        try:
+            if op == "reorder":
+                ops.move_v1(tl, cid, int(body.get("index", 0)))
+            elif op == "move":
+                ops.move_clip(tl, cid, float(body.get("start", 0.0)))
+            elif op == "trim":
+                edge = str(body.get("edge", "out"))
+                if edge not in ("in", "out"):
+                    raise ValueError("edge musi być 'in' albo 'out'")
+                ops.trim_clip(tl, media, cid, edge, float(body.get("delta", 0.0)))
+            else:
+                ops.delete_clip(tl, cid)
+        except KeyError:
+            raise HTTPException(404, "Nie znaleziono klipu")
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return tl
+    return p.mutate_timeline(mut, labels[op], "user").to_json()
 
 
 @app.post("/api/projects/{pid}/preview/render")

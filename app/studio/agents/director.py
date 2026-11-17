@@ -78,7 +78,8 @@ def _plan_fn(opts: dict, takes_id: str):
         plan = planner.make_plan(brief=opts.get("brief", ""), style=opts.get("style") or p.meta.style,
                                  platforms=opts.get("platforms") or p.meta.platforms, target=opts.get("target_duration")
                                  or p.meta.target_duration, sentences=sentences, shots=shots, effort=ctx.effort,
-                                 hierarchical=hier, project_id=p.id)
+                                 hierarchical=hier, project_id=p.id,
+                                 media_names={m.id: m.name for m in p.media()})
         plan["_brief"] = opts.get("brief", "")
         ctx.log(f"Plan ({plan.get('_source')}, {time.time() - t0:.0f} s): {planner.plan_to_text(plan)}")
         if plan.get("logline"):

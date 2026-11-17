@@ -20,9 +20,10 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 
 class FFmpegError(RuntimeError):
-    def __init__(self, msg: str, stderr: str = ""):
+    def __init__(self, msg: str, stderr: str = "", returncode: int | None = None):
         super().__init__(msg)
         self.stderr = stderr
+        self.returncode = returncode
 
 
 class Cancelled(RuntimeError):
@@ -88,7 +89,7 @@ def run(args: Sequence[str | os.PathLike], *, duration: float | None = None,
     stderr = b"".join(err_chunks).decode("utf-8", "ignore")
     if proc.returncode != 0:
         tail = "\n".join(stderr.strip().splitlines()[-25:])
-        raise FFmpegError(f"ffmpeg zakończył się kodem {proc.returncode}:\n{tail}", stderr)
+        raise FFmpegError(f"ffmpeg zakończył się kodem {proc.returncode}:\n{tail}", stderr, proc.returncode)
     if progress:
         progress(1.0)
     return stderr
@@ -126,6 +127,30 @@ def _probe_ffprobe(path: str) -> dict:
     return json.loads(p.stdout.decode("utf-8", "ignore") or "{}")
 
 
+def _stream_rotation(container, stream) -> int:
+    """Obrót z macierzy wyświetlania (stopnie, konwencja `ffmpeg -i`: „rotation of -90.00 degrees”).
+
+    iPhone i większość telefonów nagrywa pion jako 3840x2160 + obrót -90° w macierzy wyświetlania.
+    PyAV ≥ 14 nie wystawia jej na strumieniu (`side_data` zniknęło), ale ma `frame.rotation` na
+    zdekodowanej klatce - dekodujemy jedną klatkę (wynik probe jest cache'owany).
+    """
+    try:
+        sd = getattr(stream, "side_data", None)
+        if sd is not None:
+            dm = sd.get("DISPLAYMATRIX")
+            if dm is not None:
+                return int(round(float(dm)))
+    except Exception:
+        pass
+    try:
+        container.seek(0)
+        for frame in container.decode(stream):
+            return int(round(float(getattr(frame, "rotation", 0) or 0)))
+    except Exception:
+        pass
+    return 0
+
+
 def _probe_pyav(path: str) -> dict:
     """Probe przez PyAV, zwraca strukturę zgodną z ffprobe -show_format -show_streams."""
     import av  # type: ignore
@@ -157,12 +182,9 @@ def _probe_pyav(path: str) -> dict:
                 if rot:
                     d["side_data_list"] = [{"rotation": -int(rot)}]
                 else:
-                    try:
-                        dm = s.side_data.get("DISPLAYMATRIX") if hasattr(s, "side_data") else None
-                        if dm is not None:
-                            d["side_data_list"] = [{"rotation": int(round(float(dm)))}]
-                    except Exception:
-                        pass
+                    r = _stream_rotation(c, s)
+                    if r:
+                        d["side_data_list"] = [{"rotation": r}]
             elif s.type == "audio":
                 d["sample_rate"] = str(cc.sample_rate or 0)
                 d["channels"] = getattr(cc, "channels", 0) or (cc.layout.nb_channels if cc.layout else 0)
@@ -180,6 +202,7 @@ def _probe_ffmpeg_stderr(path: str) -> dict:
     if m:
         fmt["duration"] = str(int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3)))
     streams = []
+    rm = re.search(r"rotation of (-?[\d.]+) degrees", txt)
     for line in txt.splitlines():
         if "Stream #" not in line:
             continue
@@ -195,6 +218,8 @@ def _probe_ffmpeg_stderr(path: str) -> dict:
             for k, pat in (("color_transfer", r"bt709|smpte2084|arib-std-b67"),):
                 cm = re.search(pat, line)
                 d[k] = cm.group(0) if cm else ""
+            if rm and not any(s.get("codec_type") == "video" for s in streams):
+                d["side_data_list"] = [{"rotation": int(round(float(rm.group(1))))}]
             streams.append(d)
         elif "Audio:" in line:
             d = {"codec_type": "audio", "codec_name": line.split("Audio:")[1].split()[0].strip(",")}

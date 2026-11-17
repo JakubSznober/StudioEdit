@@ -226,3 +226,168 @@ def trim_pauses(tl: Timeline, t0: float, t1: float, amount: float = 0.08) -> int
         n += 1
     tl.normalize()
     return n
+
+
+# ================================================================================================
+# Ręczna edycja z osi czasu (przeciąganie, przycinanie, kolejność, usuwanie)
+# ================================================================================================
+MIN_CLIP_S = 0.1
+ANCHORED_TRACKS = ("V2", "V3", "A2", "A4", "A5")  # przebitki, tytuły, lektor, SFX - „przyklejone” do wypowiedzi
+
+
+def _media_len(media: dict, c) -> float | None:
+    m = media.get(getattr(c, "media_id", None) or "")
+    d = float(m.info.get("duration") or 0) if m is not None else 0.0
+    return d if d > 0 else None
+
+
+def _relayout_v1(tl: Timeline, order: list[VClip], removed: set[str] | None = None) -> None:
+    """Układa V1 bez luk w podanej kolejności i przenosi razem z każdym klipem: powiązany dialog (A1),
+    elementy zaczynające się w jego obrębie (przebitki, tytuły, SFX, markery) i przejście na jego końcu."""
+    removed = removed or set()
+    old = {c.id: (c.start, c.end) for c in tl.tracks.get("V1", [])}
+    old_next = {}
+    v1_old = sorted(tl.tracks.get("V1", []), key=lambda c: c.start)
+    for a, b in zip(v1_old, v1_old[1:]):
+        old_next[a.id] = b.id
+    trans_after = {}
+    for tr in tl.transitions:
+        owner = next((cid for cid, (_s, e) in old.items() if abs(e - tr.at) < 1e-3), None)
+        if owner:
+            trans_after[owner] = tr
+
+    deltas: dict[str, float] = {}
+    cur = 0.0
+    for c in order:
+        deltas[c.id] = round(cur - c.start, 6)
+        c.start = round(cur, 4)
+        cur = c.end
+
+    def owner_of(t: float) -> str | None:
+        for cid, (s, e) in old.items():
+            if s - 1e-6 <= t < e - 1e-6:
+                return cid
+        return None
+
+    # dialog powiązany z klipem obrazu
+    a1 = []
+    for ac in tl.tracks.get("A1", []):
+        if ac.link in removed:
+            continue
+        if ac.link in deltas:
+            ac.start = round(max(0.0, ac.start + deltas[ac.link]), 4)
+        else:
+            o = owner_of(ac.start)
+            if o in removed:
+                continue
+            if o in deltas:
+                ac.start = round(max(0.0, ac.start + deltas[o]), 4)
+        a1.append(ac)
+    tl.tracks["A1"] = a1
+    # elementy zakotwiczone w czasie wypowiedzi
+    for k in ANCHORED_TRACKS:
+        keep = []
+        for c in tl.tracks.get(k, []):
+            o = owner_of(c.start)
+            if o in removed:
+                continue
+            if o in deltas:
+                c.start = round(max(0.0, c.start + deltas[o]), 4)
+            keep.append(c)
+        tl.tracks[k] = keep
+    for mk in tl.markers:
+        o = owner_of(mk.t)
+        if o in deltas:
+            mk.t = round(max(0.0, mk.t + deltas[o]), 4)
+    # przejście zostaje tylko, gdy po klipie nadal stoi ten sam następny klip
+    new_next = {a.id: b.id for a, b in zip(order, order[1:])}
+    trans = []
+    for cid, tr in trans_after.items():
+        if cid in new_next and new_next.get(cid) == old_next.get(cid):
+            tr.at = round(next(c.end for c in order if c.id == cid), 4)
+            trans.append(tr)
+    tl.transitions = trans
+    tl.tracks["V1"] = order
+    tl.normalize()
+
+
+def move_v1(tl: Timeline, clip_id: str, to_index: int) -> None:
+    order = sorted(tl.tracks.get("V1", []), key=lambda c: c.start)
+    i = next((n for n, c in enumerate(order) if c.id == clip_id), None)
+    if i is None:
+        raise KeyError(clip_id)
+    c = order.pop(i)
+    order.insert(max(0, min(len(order), int(to_index))), c)
+    _relayout_v1(tl, order)
+
+
+def move_clip(tl: Timeline, clip_id: str, start: float) -> None:
+    """Swobodne przesunięcie na ścieżkach V2-V3 / A1-A5 (V1 zmienia kolejność - patrz move_v1)."""
+    found = tl.find_clip(clip_id)
+    if not found:
+        raise KeyError(clip_id)
+    k, c = found
+    if k == "V1":
+        raise ValueError("Na V1 zmieniaj kolejność klipów (move_v1)")
+    c.start = round(max(0.0, float(start)), 4)
+    tl.normalize()
+
+
+def trim_clip(tl: Timeline, media: dict, clip_id: str, edge: str, delta: float) -> None:
+    """Przycina początek (edge='in') lub koniec ('out') o delta sekund osi (+ = w prawo)."""
+    found = tl.find_clip(clip_id)
+    if not found:
+        raise KeyError(clip_id)
+    k, c = found
+    if isinstance(c, TitleClip):
+        if edge == "in":
+            d = min(delta, c.duration - MIN_CLIP_S)
+            c.start, c.duration = round(max(0.0, c.start + d), 4), round(c.duration - d, 4)
+        else:
+            c.duration = round(max(MIN_CLIP_S, c.duration + delta), 4)
+        tl.normalize()
+        return
+    speed = getattr(c, "speed", 1.0) or 1.0
+    limit = _media_len(media, c)
+    if edge == "in":
+        src = min(max(0.0, c.src_in + delta * speed), c.src_out - MIN_CLIP_S * speed)
+        d_src = src - c.src_in
+        c.src_in = round(src, 4)
+        if k != "V1":
+            c.start = round(max(0.0, c.start + d_src / speed), 4)
+    else:
+        src = max(c.src_in + MIN_CLIP_S * speed, c.src_out + delta * speed)
+        if limit:
+            src = min(src, limit)
+        d_src = src - c.src_out
+        c.src_out = round(src, 4)
+    if isinstance(c, VClip) and c.transform and edge == "in":
+        shift = d_src / speed
+        c.transform = [Keyframe(**{**kf.model_dump(), "t": round(max(0.0, kf.t - shift), 4)}) for kf in c.transform]
+    if k == "V1":
+        for ac in tl.tracks.get("A1", []):
+            if ac.link == c.id:
+                if edge == "in":
+                    ac.src_in = round(min(max(0.0, ac.src_in + d_src), ac.src_out - MIN_CLIP_S), 4)
+                else:
+                    ac.src_out = round(max(ac.src_in + MIN_CLIP_S, ac.src_out + d_src), 4)
+                    if limit:
+                        ac.src_out = min(ac.src_out, limit)
+        _relayout_v1(tl, sorted(tl.tracks["V1"], key=lambda x: x.start))
+    else:
+        tl.normalize()
+
+
+def delete_clip(tl: Timeline, clip_id: str) -> None:
+    found = tl.find_clip(clip_id)
+    if not found:
+        raise KeyError(clip_id)
+    k, c = found
+    if k == "V1":
+        order = [x for x in sorted(tl.tracks["V1"], key=lambda x: x.start) if x.id != clip_id]
+        _relayout_v1(tl, order, removed={clip_id})
+        return
+    tl.tracks[k] = [x for x in tl.tracks[k] if x.id != clip_id]
+    if k == "V2":
+        tl.tracks["A1"] = [a for a in tl.tracks.get("A1", []) if a.link != clip_id]
+    tl.normalize()

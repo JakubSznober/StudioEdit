@@ -28,6 +28,23 @@ def _port_state(host: str, port: int) -> str:
     return "busy"
 
 
+def preload_heavy_modules() -> None:
+    """Importuje torch w głównym wątku, zanim ruszą pule wątków agentów.
+
+    Gdy dwa zadania jednocześnie po raz pierwszy importują torch (np. diaryzacja i analiza audio tuż po
+    starcie), mechanizm wykrywania zakleszczeń importu w Pythonie potrafi oddać jednemu wątkowi
+    niedokończony moduł: „partially initialized module 'torch' has no attribute 'Tensor'”.
+    """
+    log = logging.getLogger("studio.system")
+    t0 = time.time()
+    try:
+        import torch  # noqa: F401
+    except Exception as e:  # brak torch nie blokuje serwera - moduły zdegradują się same
+        log.warning("[Serwer] Wstępny import torch nie powiódł się: %s", e)
+        return
+    log.info("[Serwer] torch załadowany w %.1f s", time.time() - t0)
+
+
 def main() -> None:
     from . import paths
 
@@ -68,6 +85,7 @@ def main() -> None:
               f"      Zamknij go albo zmień port w config\\config.json (server.port) lub uruchom: "
               f"StudioEdit.cmd --port 8766\n", flush=True)
         sys.exit(1)
+    preload_heavy_modules()
     if cfg.get("server.open_browser", True) and not args.no_browser:
         threading.Thread(target=lambda: (time.sleep(2.0), webbrowser.open(url)), daemon=True).start()
     print(f"\n  StudioEdit  ->  {url}\n  (Ctrl+C zatrzymuje serwer)\n", flush=True)

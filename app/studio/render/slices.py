@@ -221,9 +221,10 @@ class Planner:
         self._paths_cache: dict[str, list[list[float]]] = {}
         self.windows: list[dict] = []
         self.v1 = [c for c in tl.tracks.get("V1", []) if isinstance(c, VClip)]
-        self.v2 = [c for c in tl.tracks.get("V2", []) if isinstance(c, VClip)]
-        self.v3 = [c for c in tl.tracks.get("V3", []) if isinstance(c, VClip)]
-        self.titles = [c for c in tl.tracks.get("V3", []) if isinstance(c, TitleClip)]
+        # ścieżki ukryte w studiu nie trafiają do renderu
+        self.v2 = [] if tl.track_off("V2") else [c for c in tl.tracks.get("V2", []) if isinstance(c, VClip)]
+        self.v3 = [] if tl.track_off("V3") else [c for c in tl.tracks.get("V3", []) if isinstance(c, VClip)]
+        self.titles = [] if tl.track_off("V3") else [c for c in tl.tracks.get("V3", []) if isinstance(c, TitleClip)]
         for k, items in tl.tracks.items():
             if k.startswith("V") and k not in ("V1", "V2", "V3"):
                 self.v3.extend(c for c in items if isinstance(c, VClip))

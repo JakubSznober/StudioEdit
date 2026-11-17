@@ -13,15 +13,25 @@ export const PLATFORMS: { key: string; label: string; aspect: string }[] = [
 export const platformLabel = (k: string) =>
   PLATFORMS.find((p) => p.key === k)?.label || (k === 'master' ? 'Master' : k);
 
+/** Lista zapasowa (pełny opis i reguły przychodzą z serwera: GET /api/styles). */
 export const STYLES: { key: string; label: string }[] = [
   { key: 'vlog', label: 'Vlog' },
-  { key: 'dokument', label: 'Dokument' },
-  { key: 'reklama', label: 'Reklama' },
+  { key: 'rolka', label: 'Rolka (TikTok / Reels / Shorts)' },
+  { key: 'reklama', label: 'Reklama / spot' },
+  { key: 'kampania', label: 'Kampania społeczna / konkurs' },
+  { key: 'dokument', label: 'Dokument / reportaż' },
+  { key: 'wywiad', label: 'Wywiad / rozmowa' },
+  { key: 'podcast', label: 'Podcast / talk' },
+  { key: 'tutorial', label: 'Tutorial / poradnik' },
+  { key: 'kinowy', label: 'Kinowy / fabularny' },
+  { key: 'zwiastun', label: 'Zwiastun / trailer' },
   { key: 'teledysk', label: 'Teledysk' },
-  { key: 'rolka', label: 'Rolka' },
-  { key: 'podcast', label: 'Podcast' },
-  { key: 'tutorial', label: 'Tutorial' },
+  { key: 'podroz', label: 'Film podróżniczy' },
+  { key: 'event', label: 'Relacja z wydarzenia / ślub' },
+  { key: 'sport', label: 'Sport / highlights' },
   { key: 'gaming', label: 'Gaming' },
+  { key: 'skecz', label: 'Skecz / komedia' },
+  { key: 'estetyczny', label: 'Estetyczny / moodboard' },
 ];
 
 export const SCALES: { key: 'small' | 'medium' | 'massive'; label: string; desc: string }[] = [

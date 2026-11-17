@@ -297,11 +297,23 @@ def execute(project, kind: str, params: dict, rng: dict | None, *, group: str) -
 LOOK_WORDS = [("teal", "teal_orange"), ("pomarańcz", "teal_orange"), ("ciepł", "warm_film"), ("filmow", "warm_film"),
               ("analog", "warm_film"), ("dokument", "clean_doc"), ("czyst", "clean_doc"), ("mrocz", "moody"),
               ("moody", "moody"), ("czarno", "bw_film"), ("czarno-bia", "bw_film"), ("żyw", "vibrant_social"),
-              ("pastel", "pastel")]
+              ("pastel", "pastel"), ("złot", "golden_hour"), ("zachód", "golden_hour"), ("high-key", "high_key"),
+              ("jasny i czysty", "high_key"), ("portret", "portrait_soft"), ("natur", "nature_vivid"),
+              ("soczyst", "nature_vivid"), ("matow", "matte_fade"), ("fade", "matte_fade"), ("retro", "vintage_70s"),
+              ("vintage", "vintage_70s"), ("thriller", "cold_thriller"), ("chłodn", "cold_thriller"),
+              ("bleach", "bleach_bypass"), ("neon", "neon_night"), ("noir", "noir"), ("sepi", "sepia")]
 PLATFORM_WORDS = [("youtube", "youtube"), ("yt", "youtube"), ("tiktok", "tiktok"), ("tik tok", "tiktok"),
                   ("reels", "reels"), ("rolk", "reels"), ("shorts", "shorts"), ("instagram", "instagram_feed"),
                   ("9:16", "tiktok"), ("pion", "tiktok")]
-STYLE_WORDS = ["vlog", "dokument", "reklama", "teledysk", "rolka", "podcast", "tutorial", "gaming"]
+def _style_words() -> list[tuple[str, str]]:
+    from ..edit import styles
+
+    generic = {"film", "short", "youtube"}  # występują w zwykłych poleceniach („zmontuj film”)
+    words = [(k, k) for k in styles.STYLES] + [(a, s) for a, s in styles.ALIASES.items() if a not in generic]
+    return sorted(words, key=lambda kv: -len(kv[0]))  # dłuższe najpierw („reportaż” przed „report”)
+
+
+STYLE_WORDS = _style_words()
 
 
 def _duration(text: str) -> float | None:
@@ -315,14 +327,14 @@ def _duration(text: str) -> float | None:
 def rule_parse(text: str, rng: dict | None) -> dict:
     t = text.lower()
     acts: list[dict] = []
-    look = next((v for k, v in LOOK_WORDS if k in t), None)
+    look = next((v for k, v in sorted(LOOK_WORDS, key=lambda kv: -len(kv[0])) if k in t), None)
     plats = []
     for k, v in PLATFORM_WORDS:
         if k in t and v not in plats:
             plats.append(v)
     if any(w in t for w in ("zmontuj", "zrób film", "zrob film", "montaż od", "zrób montaż", "złóż film")):
         acts.append({"type": "montage", "params": {"brief": text, "target_duration": _duration(t), "platforms": plats or None,
-                                                   "style": next((s for s in STYLE_WORDS if s in t), None), "look": look,
+                                                   "style": next((v for k, v in STYLE_WORDS if k in t), None), "look": look,
                                                    "subtitles": None if "napis" not in t else True}})
         return {"reply": "Przekazuję materiał zespołowi — zaczynamy montaż.", "actions": acts}
     if "cofnij" in t:

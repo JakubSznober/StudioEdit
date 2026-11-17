@@ -17,6 +17,7 @@ import os
 import shutil
 import threading
 import time
+import uuid
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from fractions import Fraction
 from pathlib import Path
@@ -95,7 +96,7 @@ def render_slice(job: SliceJob, plan: RenderPlan, *, pix: str, codec_args: list[
         g, out = build_slice_graph(job.spec, hw_decode=hw, pix=pix, titles_ass=titles_file)
         script = workdir / f"{job.hash}.fg.txt"
         script.write_text(g.script(), encoding="utf-8")
-        tmp = job.path.with_name(job.path.stem + ".part.mp4")
+        tmp = job.path.with_name(f"{job.path.stem}.{uuid.uuid4().hex[:8]}.part.mp4")  # unikalny na zadanie
         args = [*g.input_args(), "-/filter_complex", str(script), "-map", f"[{out}]", "-frames:v", str(job.n),
                 "-an", "-sn", "-dn", *codec_args, "-r", str(F),
                 "-video_track_timescale", str(presets.timescale(F)),
@@ -103,7 +104,13 @@ def render_slice(job: SliceJob, plan: RenderPlan, *, pix: str, codec_args: list[
                 "-map_metadata", "-1", "-f", "mp4", str(tmp)]
         try:
             ff.run(args, duration=job.n / float(F), progress=on_progress, cancel=cancel)
-            os.replace(tmp, job.path)
+            try:
+                os.replace(tmp, job.path)
+            except PermissionError:
+                # ten sam plaster (ten sam hash treści) zapisał właśnie inny render - używamy jego wyniku
+                if not job.path.exists():
+                    raise
+                _unlink(tmp)
             try:
                 script.unlink()
             except OSError:
@@ -133,7 +140,7 @@ def concat_slices(paths: list[Path], out: Path, workdir: Path, cancel: threading
         s = str(p).replace("\\", "/").replace("'", "'\\''")
         lines.append(f"file '{s}'")
     lst.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    tmp = out.with_name(out.stem + ".part.mp4")
+    tmp = out.with_name(f"{out.stem}.{uuid.uuid4().hex[:8]}.part.mp4")
     ff.run(["-f", "concat", "-safe", "0", "-i", str(lst), "-map", "0:v:0", "-c", "copy", "-an",
             "-movflags", "+faststart", str(tmp)], cancel=cancel)
     os.replace(tmp, out)
@@ -310,6 +317,8 @@ def timeline_hash(tl: Timeline) -> str:
     d = tl.model_copy(deep=True).to_json()
     for k in ("version", "note", "created_at", "created_by", "duration"):
         d.pop(k, None)
+    if not any(v for st in (d.get("track_state") or {}).values() for v in st.values()):
+        d.pop("track_state", None)  # brak wyłączonych ścieżek = ten sam hash co przed dodaniem pola
     return hashlib.sha1(json.dumps(d, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
@@ -453,7 +462,7 @@ def render_timeline(project, timeline: Timeline, variant: Variant, out_path: Pat
     prog.set("subtitles", 1.0, force=True)
     # krok końcowy
     L = plan.duration
-    tmp = out_path.with_name(out_path.stem + ".part" + out_path.suffix)
+    tmp = out_path.with_name(f"{out_path.stem}.{uuid.uuid4().hex[:8]}.part{out_path.suffix}")
     ext = out_path.suffix.lower()
     meta_title = settings.get("title") or getattr(getattr(project, "meta", None), "name", "") or "StudioEdit"
     args: list[str] = ["-i", str(video_full), "-i", str(wav), "-map", "0:v:0", "-map", "1:a:0"]

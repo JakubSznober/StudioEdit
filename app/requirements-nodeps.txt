@@ -1,0 +1,12 @@
+# Pakiety instalowane z --no-deps (ich metadane wymuszają stare torch/numpy, a działają z nowszymi).
+# Instaluje je scripts\install_python.ps1: pip install --no-deps -r app\requirements-nodeps.txt
+chatterbox-tts==0.1.7
+s3tokenizer==0.3.0
+resemble-perth==1.0.1
+conformer==0.3.2
+diffusers==0.43.0
+omegaconf==2.4.0
+antlr4-python3-runtime==4.13.2
+einops==0.8.2
+pykakasi==2.3.0
+jaconv==0.5.0

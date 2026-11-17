@@ -7,6 +7,7 @@ import type {
   ChatMessage,
   ExportFile,
   Look,
+  StyleInfo,
   Loudness,
   MediaItem,
   PreviewInfo,
@@ -37,6 +38,7 @@ interface ProjectState {
   exports: ExportFile[];
   exportsLoaded: boolean;
   looks: Look[];
+  styles: StyleInfo[];
 }
 
 const LS_ACTIVE = 'studioedit.activeProject';
@@ -79,6 +81,7 @@ export const useProject = create<ProjectState>(() => ({
   activeId: lsGet(),
   variant: 'youtube',
   looks: [],
+  styles: [],
   ...empty,
 }));
 
@@ -316,6 +319,16 @@ export const project = {
       set({ looks: Array.isArray(looks) ? looks : [] });
     } catch {
       /* brak looków */
+    }
+  },
+
+  async loadStyles() {
+    if (get().styles.length) return;
+    try {
+      const styles = await sys.styles();
+      set({ styles: Array.isArray(styles) ? styles : [] });
+    } catch {
+      /* brak katalogu - zostaje lista wbudowana */
     }
   },
 

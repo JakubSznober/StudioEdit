@@ -42,14 +42,28 @@ Jeśli się nie otworzy — wpisz ten adres ręcznie.
 
 ## 4. Instalacja od zera (nowy komputer / naprawa)
 
-```
-git clone https://github.com/JakubSznober/StudioEdit.git C:\StudioEdit
-powershell -ExecutionPolicy Bypass -File C:\StudioEdit\scripts\install.ps1 -All
-```
+1. Skopiuj kod do `C:\StudioEdit` — `git clone https://github.com/JakubSznober/StudioEdit.git C:\StudioEdit`
+   albo skopiuj folder z tego komputera **bez** ciężkich folderów (`.venv`, `AI-Models`, `ComfyUI`, `tools`,
+   `Cache`, `Downloads`, `frontend\node_modules`), które instalator i tak pobierze.
+2. Dwuklik **`C:\StudioEdit\INSTALUJ.cmd`** i poczekaj (kilka godzin, ok. 110 GB).
 
-Instalator pobiera FFmpeg, Node.js, ComfyUI, środowisko Python z CUDA, buduje interfejs i pobiera modele AI
-(ok. 80 GB). Można go uruchamiać ponownie — pominie to, co już jest.
+Instalator przygotowuje wszystkich agentów:
 
+| Krok | Co instaluje |
+|---|---|
+| 0 | sprawdza kartę NVIDIA, wolne miejsce; w razie braku doinstalowuje Visual C++ Redistributable |
+| 1 | FFmpeg 9 (NVENC), modele RNNoise, Node.js, 7-Zip, ComfyUI (do `tools\` i `ComfyUI\`) |
+| 2 | Python 3.12 (jeśli go brak), `.venv` z PyTorch CUDA i bibliotekami agentów, Chatterbox (klonowanie głosu) |
+| 3 | Ollama (jeśli jej brak) + zmienna `OLLAMA_MODELS`, żeby modele trafiały do `AI-Models\Ollama` |
+| 4 | interfejs (React) |
+| 5 | modele AI: Qwen 3.6 / 3.8 / Qwen3-VL, Whisper, WavLM, Piper, MusicGen, DeepFilterNet 3, Chatterbox, SAM 2.1, YOLO11, LaMa, YuNet, Wan 2.2, IC-Light |
+| 6 | skrót StudioEdit na pulpicie |
+| 7 | sprawdzenie: lista agentów, modułów i brakujących modeli |
+
+Można go uruchamiać ponownie — pominie to, co już jest, i dokończy przerwane pobieranie.
+Twoje ustawienia (np. wysiłek reżysera „max”) są w `config\config.json` — skopiuj ten plik, jeśli chcesz je przenieść.
+
+Stan instalacji: `C:\StudioEdit\.venv\Scripts\python.exe C:\StudioEdit\scripts\verify_install.py`
 Stan modeli: `C:\StudioEdit\.venv\Scripts\python.exe C:\StudioEdit\scripts\install_models.py --list`
 
 ## 5. Gdy coś nie działa

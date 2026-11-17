@@ -33,7 +33,14 @@ if (-not (Test-Path (Join-Path $ffDir 'bin\ffmpeg.exe'))) {
     Move-Item $inner.FullName $ffDir
     Remove-Item -Recurse -Force $x
 }
-Write-Host "[ok] FFmpeg: $(& (Join-Path $ffDir 'bin\ffmpeg.exe') -hide_banner -version | Select-Object -First 1)"
+try {
+    Write-Host "[ok] FFmpeg: $(& (Join-Path $ffDir 'bin\ffmpeg.exe') -hide_banner -version | Select-Object -First 1)"
+} catch {
+    Write-Host "[!] FFmpeg nie chce sie uruchomic: $($_.Exception.Message)" -ForegroundColor Yellow
+    Write-Host '    Jesli Windows pisze o zasadach kontroli aplikacji, to Smart App Control blokuje nowy build.' -ForegroundColor Yellow
+    Write-Host '    Skopiuj folder tools\ffmpeg z dzialajacego komputera i uruchom instalator ponownie.' -ForegroundColor Yellow
+    throw
+}
 
 # --- RNNoise model dla filtra arnndn (odszumianie bez GPU) ---
 $rn = Join-Path $Tools 'rnnoise'

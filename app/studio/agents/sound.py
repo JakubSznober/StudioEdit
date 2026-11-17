@@ -206,8 +206,13 @@ def _analysis_fn(mid: str):
 # ------------------------------------------------------------------------------------------
 # Po montażu
 # ------------------------------------------------------------------------------------------
-STYLE_MOOD = {"vlog": "vlog", "dokument": "spokojny", "reklama": "inspirujacy", "teledysk": "energiczny",
-              "rolka": "energiczny", "podcast": "spokojny", "tutorial": "vlog", "gaming": "energiczny"}
+def _style_moods() -> dict[str, str]:
+    from ..edit import styles
+
+    return {k: v["music_mood"] for k, v in styles.STYLES.items()}
+
+
+STYLE_MOOD = _style_moods()
 
 
 def _media_duration(project, mid: str) -> float:

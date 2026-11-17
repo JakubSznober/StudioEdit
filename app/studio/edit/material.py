@@ -87,9 +87,11 @@ def collect(project) -> tuple[list[SentenceUnit], list[ShotUnit]]:
                                               order=order))
                 order += 1
                 spoken.append((s.s, s.e))
+        # wstawka z kilkoma przypadkowymi słowami (np. ekran telefonu z artykułem) to przebitka, nie wypowiedź
+        few_words = bool(m.transcript) and sum(len(s.words) for s in m.transcript.sentences) <= 4
         for sh in m.analysis.shots:
             # przebitką może być całe ujęcie B-roll albo fragment A-rollu bez mowy (>= 1,5 s)
-            if m.bin == "B-Roll" or m.kind == "image" or not spoken:
+            if m.bin == "B-Roll" or m.kind == "image" or not spoken or few_words:
                 kw = _kw(sh.description + " " + " ".join(sh.tags) + " " + sh.action)
                 dur = sh.e - sh.s
                 if dur > 6.0 and m.kind != "image":

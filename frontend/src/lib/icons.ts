@@ -27,6 +27,7 @@ export {
   Ellipsis,
   ExternalLink,
   Eye,
+  EyeOff,
   Film,
   Flag,
   FlaskConical,

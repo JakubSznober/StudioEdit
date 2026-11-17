@@ -73,7 +73,9 @@ def test_presets_and_sizes():
     v = presets.variant_for("tiktok")
     assert (v.width, v.height, v.max_duration) == (1080, 1920, 60.0)
     assert presets.variant_for("instagram_feed").height == 1350
-    assert presets.render_size(v, {}, "preview")[1] == 720
+    # podgląd: krótszy bok 720 - pion 720x1280 (wcześniej 404x720, rozmyte), poziom 1280x720
+    assert presets.render_size(v, {}, "preview") == (720, 1280)
+    assert presets.render_size(presets.variant_for("youtube"), {}, "preview") == (1280, 720)
     assert presets.render_size(presets.variant_for("youtube"), {"resolution": "2160p"}, "final") == (3840, 2160)
     assert presets.fps_fraction(29.97) == Fraction(30000, 1001)
     n = presets.normalize_settings({"codec": "prores", "container": "mp4", "audio_codec": "wav", "quality": "max"})

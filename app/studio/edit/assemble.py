@@ -8,6 +8,7 @@ tryb montażu obrazowego (bez mowy) z cięciem na ruchu i do bitu.
 from __future__ import annotations
 
 import math
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
@@ -17,6 +18,7 @@ import numpy as np
 from ..config import get_config
 from ..project.model import (AClip, Keyframe, Marker, SpeedPoint, SubtitleSettings, Timeline, TitleClip, Transition,
                              VClip, Variant)
+from . import styles
 from .material import SentenceUnit, ShotUnit, keywords
 from .takes import keep_ranges
 
@@ -68,7 +70,7 @@ class Piece:
 def _resolve(plan: dict, sentences: list[SentenceUnit], shots: list[ShotUnit]) -> tuple[list[tuple[str, Any, dict]], list[str]]:
     by_s = {u.id: u for u in sentences}
     by_sh = {s.id: s for s in shots}
-    seq, missing, seen = [], [], set()
+    seq, missing, seen, groups = [], [], set(), set()
     for sec in plan.get("structure", []):
         part = sec.get("part", "rozwinięcie")
         for it in sec.get("items", []):
@@ -79,16 +81,21 @@ def _resolve(plan: dict, sentences: list[SentenceUnit], shots: list[ShotUnit]) -
             if u is None:
                 missing.append(iid)
                 continue
+            tg = getattr(u, "take_group", None)
+            if tg and tg in groups:
+                continue  # druga wersja tej samej kwestii (dubel) - powtórzony głos
             seen.add(iid)
+            if tg:
+                groups.add(tg)
             seq.append((part, u, it))
     return seq, missing
 
 
-def _fit_target(seq, target: float | None, pieces_dur) -> list:
+def _fit_target(seq, target: float | None, pieces_dur, tolerance: float = 1.08) -> list:
     if not target:
         return seq
     total = sum(pieces_dur(u) for _p, u, _i in seq)
-    if total <= target * 1.08:
+    if total <= target * tolerance:
         return seq
     # usuwaj najsłabsze elementy rozwinięcia, potem kulminacji (hook i zakończenie zostają)
     order = sorted([i for i, (p, _u, _it) in enumerate(seq) if p == "rozwinięcie"],
@@ -128,7 +135,8 @@ def assemble(project, plan: dict, sentences: list[SentenceUnit], shots: list[Sho
                   brief=plan.get("_brief", ""), look=look or plan.get("look") or None)
     frame = 1.0 / fps
     breath = float(acfg.get("breath_ms", 200)) / 1000.0
-    pace = plan.get("pace", "umiarkowane")
+    st = styles.get(style)
+    pace = st["pace"] if style else plan.get("pace", "umiarkowane")
     dynamic = pace in ("dynamiczne", "bardzo dynamiczne")
 
     seq, missing = _resolve(plan, sentences, shots)
@@ -141,7 +149,9 @@ def assemble(project, plan: dict, sentences: list[SentenceUnit], shots: list[Sho
             return sum(b - a for a, b in keep_ranges(u.sentence, breath=breath))
         return min(u.dur, 2.2 if dynamic else 3.5)
 
-    seq = _fit_target(seq, target, unit_dur)
+    # plan z modelu już uwzględnia długość i historię - przycinamy tylko wyraźne przekroczenie, bo usuwanie
+    # „najsłabszych” elementów rozwinięcia wycina kontekst (np. scenę, na którą reaguje kolejne zdanie)
+    seq = _fit_target(seq, target, unit_dur, tolerance=1.25 if plan.get("_source") == "llm" else 1.08)
 
     # ---------------------------------------------------------------- kawałki źródła
     pieces: list[Piece] = []
@@ -167,6 +177,10 @@ def assemble(project, plan: dict, sentences: list[SentenceUnit], shots: list[Sho
             src_len = want * speed
             pieces.append(Piece(unit=u, part=part, s=round(a, 3), e=round(min(u.e, a + src_len), 3), first_of_unit=True,
                                 last_of_unit=True, why=it.get("why", ""), speed=speed))
+
+    # sąsiednie zdania z tego samego pliku: oddech końca + zapas początku nachodzą na siebie, przez co
+    # kilka głosek słychać dwa razy - zaczynamy kolejny kawałek dokładnie tam, gdzie skończył się poprzedni
+    pieces = clamp_overlaps(pieces)
 
     # ---------------------------------------------------------------- V1 + A1
     cursor = 0.0
@@ -200,38 +214,31 @@ def assemble(project, plan: dict, sentences: list[SentenceUnit], shots: list[Sho
     piece_of = {v.id: p for v, p in zip(v1, [p for p in pieces if (p.e - p.s) / p.speed >= frame * 3])}
 
     # ---------------------------------------------------------------- ruch kamery: punch-in, cut-in, slow zoom
-    punch = float(ecfg.get("punch_in_scale", 1.15))
+    # Bez skokowych cut-inów: nagła zmiana skali w jednej klatce przy cięciu w tym samym ujęciu wyglądała jak
+    # losowe zbliżenie (a po zejściu przebitki zostawała do końca ujęcia). Jump cuty przykrywa B-roll.
+    punch = min(1.1, float(ecfg.get("punch_in_scale", 1.08)))
     slow = float(ecfg.get("slow_zoom_scale", 1.08))
-    alt = False
     for i, vc in enumerate(v1):
         pc = piece_of[vc.id]
-        prev = v1[i - 1] if i else None
-        same_take_cut = prev is not None and prev.media_id == vc.media_id and abs(prev.src_out - vc.src_in) > frame * 2
         kfs: list[Keyframe] = []
         base = 1.0
-        if same_take_cut:
-            # cięcie w tym samym ujęciu = potencjalny jump cut → zmiana skali (cut-in) naprzemiennie
-            alt = not alt
-            base = 1.12 if alt else 1.0
-        else:
-            alt = False
         kfs.append(Keyframe(t=0.0, scale=base, ease="linear"))
-        # punch-in na słowie kluczowym
-        if isinstance(pc.unit, SentenceUnit) and pc.emphasis and effort_level >= 1:
+        # punch-in na słowie kluczowym - płynne najechanie, nie skok
+        if st["punch_in"] and isinstance(pc.unit, SentenceUnit) and pc.emphasis and effort_level >= 1:
             words = [w for w in pc.unit.sentence.words if pc.s <= w.s < pc.e]
             targets = {e.lower().strip(".,!?") for e in pc.emphasis}
             hit = next((w for w in words if w.w.lower().strip(".,!?") in targets), None)
             if hit is not None:
                 t_hit = (hit.s - pc.s) / vc.speed
-                if 0.3 < t_hit < vc.duration - 0.4:
-                    kfs.append(Keyframe(t=round(t_hit - frame, 4), scale=base, ease="hold"))
-                    kfs.append(Keyframe(t=round(t_hit, 4), scale=round(base * punch / 1.0 if base == 1.0 else base * 1.06, 3),
-                                        ease="hold"))
-                    vc.reason += f" · punch-in na „{hit.w}”"
+                ramp = PUNCH_RAMP_S
+                if ramp + 0.1 < t_hit < vc.duration - 0.6:
+                    kfs.append(Keyframe(t=round(t_hit - ramp, 4), scale=base, ease="ease"))
+                    kfs.append(Keyframe(t=round(t_hit, 4), scale=round(base * punch, 3), ease="linear"))
+                    vc.reason += f" · płynny punch-in na „{hit.w}”"
         if len(kfs) == 1:
             sh = getattr(pc.unit, "shot", None)
             static = sh is not None and (sh.camera_move in ("statyczny", "") and sh.motion < 1.2)
-            if static and vc.duration >= 2.5:
+            if st["slow_zoom"] and static and vc.duration >= 2.5:
                 kfs.append(Keyframe(t=round(vc.duration, 4), scale=round(base * slow, 3), ease="linear"))
                 vc.reason += f" · slow zoom {int(base * 100)}→{int(base * slow * 100)}%"
         vc.transform = kfs if (len(kfs) > 1 or base != 1.0) else []
@@ -271,20 +278,54 @@ def assemble(project, plan: dict, sentences: list[SentenceUnit], shots: list[Sho
     v2: list[VClip] = []
     if speech_mode and shots:
         v2 = _place_broll(v1, piece_of, shots, media, fps=fps, dynamic=dynamic, effort_level=effort_level,
-                          max_len=float(ecfg.get("max_broll_s", 5.0)), log=log)
+                          gap_need=st["broll_gap"],
+                          max_len=float(ecfg.get("max_broll_s", 5.0)), log=log,
+                          alt_takes=alternate_take_media(sentences))
 
     # ---------------------------------------------------------------- przejścia
     transitions: list[Transition] = []
     by_unit_last = {}
     for vc in v1:
         by_unit_last[piece_of[vc.id].unit.id] = vc
+    idx_of = {vc.id: i for i, vc in enumerate(v1)}
+    by_part_last = {}
+    for vc in v1:
+        by_part_last[piece_of[vc.id].part] = vc
+
+    def scene_change(a: VClip, b: VClip) -> bool:
+        if a.media_id == b.media_id:
+            return False
+        la, lb = _location(media[a.media_id], a.src_out), _location(media[b.media_id], b.src_in)
+        if la and lb:
+            return location_differs(la, lb)
+        return piece_of[a.id].part != piece_of[b.id].part
+
+    brief_asks = bool(TRANSITION_WORDS.search(plan.get("_brief", "") or tl.brief or ""))
     for tr in plan.get("transitions", []) or []:
-        vc = by_unit_last.get(str(tr.get("after", "")))
+        after = str(tr.get("after", ""))
+        # model podaje id zdania albo nazwę części („hook”, „rozwinięcie”…)
+        vc = by_unit_last.get(after) or by_part_last.get(after.lower())
         if vc is None or vc is v1[-1]:
             continue
-        kind = tr.get("kind", "dissolve")
-        transitions.append(Transition(at=round(vc.end, 4), kind=kind if kind in Transition.model_fields["kind"].annotation.__args__ else "dissolve",
-                                      duration=0.35 if kind == "whip" else 0.6, reason=tr.get("why", "z planu")))
+        nxt = v1[idx_of[vc.id] + 1]
+        kind = natural_transition(str(tr.get("kind", "dissolve")), style=style, speech=speech_mode,
+                                  same_media=vc.media_id == nxt.media_id, scene_change=scene_change(vc, nxt),
+                                  brief_asks=brief_asks)
+        if kind is None or any(abs(t.at - vc.end) < 1e-3 for t in transitions):
+            continue
+        transitions.append(Transition(at=round(vc.end, 4), kind=kind, duration=TRANSITION_S.get(kind, 0.4),
+                                      reason=tr.get("why", "z planu")))
+    # brief prosi o przejścia, a plan żadnego nie dał → spokojne przenikanie przy każdej zmianie sceny
+    if not transitions and brief_asks:
+        last_at = -999.0
+        for i in range(1, len(v1)):
+            prev, cur = v1[i - 1], v1[i]
+            if scene_change(prev, cur) and prev.end - last_at >= 6.0:
+                kind = natural_transition("dissolve", style=style, speech=speech_mode, same_media=False,
+                                          scene_change=True, brief_asks=True)
+                transitions.append(Transition(at=round(prev.end, 4), kind=kind, duration=TRANSITION_S[kind],
+                                              reason="zmiana sceny (brief prosi o przejścia)"))
+                last_at = prev.end
     # reguła: zmiana lokacji między różnymi mediami (bez przejścia z planu)
     have = {round(t.at, 2) for t in transitions}
     last_tr = -999.0
@@ -293,7 +334,7 @@ def assemble(project, plan: dict, sentences: list[SentenceUnit], shots: list[Sho
         if prev.media_id == cur.media_id or round(prev.end, 2) in have:
             continue
         lp, lc = _location(media[prev.media_id], prev.src_out), _location(media[cur.media_id], cur.src_in)
-        if lp and lc and lp != lc and prev.end - last_tr > 20 and not dynamic:
+        if st["transitions"] != "none" and lp and lc and location_differs(lp, lc) and prev.end - last_tr > 20                 and not dynamic:
             transitions.append(Transition(at=round(prev.end, 4), kind="dissolve", duration=0.5,
                                           reason=f"zmiana miejsca: {lp} → {lc}"))
             last_tr = prev.end
@@ -306,14 +347,18 @@ def assemble(project, plan: dict, sentences: list[SentenceUnit], shots: list[Sho
     if "zakończenie" in part_starts:
         markers.append(Marker(t=round(part_starts["zakończenie"], 3), label="ZAKOŃCZENIE", kind="outro", color="#10b981"))
     titles: list[TitleClip] = []
-    if plan.get("title_card") and style in ("vlog", "dokument", "tutorial", "podcast") and effort_level >= 1:
+    if plan.get("title_card") and st["title_card"] and effort_level >= 1:
         titles.append(TitleClip(text=str(plan["title_card"])[:60], start=0.4, duration=2.6, style="title",
                                 position="bottom"))
     vertical = any(v.aspect in ("9:16", "4:5") for v in variants)
     subs = SubtitleSettings()
     subs.enabled = speech_mode if subtitles is None else (subtitles and speech_mode)
-    subs.mode = "word_pop" if vertical or dynamic else "static"
-    subs.style = "bold_social" if vertical else "modern"
+    sub_mode, sub_style = st["subtitles"]
+    # pion (TikTok/Reels) czyta się lepiej słowo po słowie dużą czcionką - chyba że styl wyłącza napisy
+    subs.mode = sub_mode if sub_mode == "none" or not vertical else "word_pop"
+    subs.style = "bold_social" if vertical and sub_style == "modern" else sub_style
+    if sub_mode == "none":
+        subs.enabled = False
     subs.uppercase = vertical and dynamic
     tl.tracks = {"V1": v1, "V2": v2, "V3": titles, "A1": a1, "A2": [], "A3": [], "A4": [], "A5": []}
     tl.transitions = transitions
@@ -346,26 +391,91 @@ def _location(m, t: float) -> str:
     return ""
 
 
+def clamp_overlaps(pieces: list) -> list:
+    """Usuwa nakładanie się kolejnych kawałków z tego samego źródła (powtórzone głoski)."""
+    out = []
+    for pc in pieces:
+        prev = out[-1] if out else None
+        if prev is not None and prev.unit.media_id == pc.unit.media_id and prev.s <= pc.s < prev.e:
+            pc.s = round(prev.e, 3)
+            if pc.e - pc.s < 0.05:
+                if pc.last_of_unit:
+                    prev.last_of_unit = True
+                continue
+        out.append(pc)
+    return out
+
+
+AROLL_GUARD_S = 8.0  # przebitka nie może pokazywać tego samego nagrania w pobliżu użytego fragmentu wypowiedzi
+
+
+PUNCH_RAMP_S = 0.4
+TRANSITION_WORDS = re.compile(r"przej[śs][cć]|przenik|transition", re.I)
+
+
+def location_differs(a: str, b: str) -> bool:
+    """Opisy miejsca to swobodny tekst („korytarz szkolny” vs „korytarz szkoły”) - porównujemy rdzenie słów."""
+    from .takes import content_stems
+
+    sa, sb = content_stems(a) or {a[:5]}, content_stems(b) or {b[:5]}
+    return len(sa & sb) / max(1, min(len(sa), len(sb))) < 0.5
+TRANSITION_S = {"dissolve": 0.4, "dip_black": 0.5, "dip_white": 0.4, "whip": 0.3, "light_leak": 0.5, "zoom": 0.35,
+                "slide": 0.35}
+
+
+def natural_transition(kind: str, *, style: str, speech: bool, same_media: bool, scene_change: bool,
+                       brief_asks: bool = False) -> str | None:
+    """Przejście, które nie razi: tylko przy zmianie sceny; efektowne rodzaje tylko w stylach „flashy”
+    (teledysk, zwiastun, sport, gaming), styl z czystymi cięciami (podcast, skecz) bez przejść, chyba że
+    brief wprost o nie prosi. Model chętnie proponuje whip/zoom w środku rozmowy - to wygląda przypadkowo.
+    None = zostaw czyste cięcie.
+    """
+    policy = styles.get(style)["transitions"]
+    if same_media or not scene_change or (policy == "none" and not brief_asks):
+        return None
+    if policy == "flashy" or not speech:
+        return kind if kind in TRANSITION_S else "dissolve"
+    return "dip_black" if kind in ("dip_black", "dip_white") else "dissolve"
+
+
+def alternate_take_media(sentences: list) -> set[str]:
+    """Pliki zawierające wyłącznie słabsze duble kwestii - to prawie ten sam obraz co HERO, nie przebitka."""
+    by_media: dict[str, list] = {}
+    for u in sentences:
+        by_media.setdefault(u.media_id, []).append(u)
+    return {mid for mid, us in by_media.items() if us and all(u.take_group and not u.hero for u in us)}
+
+
 def _place_broll(v1: list[VClip], piece_of: dict, shots: list[ShotUnit], media: dict, *, fps: float, dynamic: bool,
-                 effort_level: int, max_len: float, log) -> list[VClip]:
+                 effort_level: int, max_len: float, log, alt_takes: set[str] | None = None,
+                 gap_need: float | None = 7.0) -> list[VClip]:
     frame = 1.0 / fps
+    alt_takes = alt_takes or set()
     out: list[VClip] = []
     busy: list[tuple[float, float]] = []
     total = v1[-1].end if v1 else 0
-    used: set[str] = set()
+    # zakresy źródeł już widoczne na osi (wypowiedzi z V1 + użyte przebitki) - nie pokazujemy ich drugi raz
+    shown: dict[str, list[tuple[float, float]]] = {}
+    for vc in v1:
+        shown.setdefault(vc.media_id, []).append((vc.src_in - AROLL_GUARD_S, vc.src_out + AROLL_GUARD_S))
+    uses: dict[str, int] = {}
 
     def free(a, b):
         return all(b <= x or a >= y for x, y in busy)
 
+    def visible(s: ShotUnit) -> bool:
+        return any(s.s < y and s.e > x for x, y in shown.get(s.media_id, []))
+
     def choose(query_kw: set[str], avoid_media: str, avoid_t: float) -> ShotUnit | None:
         best, best_sc = None, -1.0
         for s in shots:
-            if s.id in used or s.dur < 1.0:
+            if s.dur < 1.0 or visible(s) or s.media_id == avoid_media or s.media_id in alt_takes:
                 continue
-            if s.media_id == avoid_media and abs(s.s - avoid_t) < 8:
-                continue
+            if uses.get(s.media_id, 0) >= 1:
+                continue  # jedno nagranie = najwyżej jedna przebitka (inaczej widz widzi „te same nagrania”)
             overlap = len(query_kw & s.keywords) / max(1, len(query_kw)) if query_kw else 0.0
-            sc = 0.6 * overlap + 0.4 * s.shot.score - (0.15 if s.is_aroll_gap else 0)
+            # kolejne przebitki z tego samego pliku są coraz mniej mile widziane - różnorodność obrazu
+            sc = 0.6 * overlap + 0.4 * s.shot.score - (0.15 if s.is_aroll_gap else 0) - 0.3 * uses.get(s.media_id, 0)
             if sc > best_sc:
                 best, best_sc = s, sc
         return best
@@ -402,7 +512,8 @@ def _place_broll(v1: list[VClip], piece_of: dict, shots: list[ShotUnit], media: 
             vc.transform = [Keyframe(t=0, scale=1.0, ease="linear"), Keyframe(t=round(dur, 3), scale=1.06, ease="linear")]
         out.append(vc)
         busy.append((a, a + dur))
-        used.add(s.id)
+        shown.setdefault(s.media_id, []).append((vc.src_in, vc.src_out))
+        uses[s.media_id] = uses.get(s.media_id, 0) + 1
 
     # 1) przykrywanie jump cutów (cięcia wewnątrz tego samego ujęcia)
     for i in range(1, len(v1)):
@@ -418,9 +529,8 @@ def _place_broll(v1: list[VClip], piece_of: dict, shots: list[ShotUnit], media: 
             mid = vc.start + min(1.0, vc.duration * 0.25)
             place(mid, mid + min(max_len, max(2.0, vc.duration * 0.6)), pc.broll_query, vc, f"„{pc.broll_query}”")
     # 3) gęstość: długie odcinki gadającej głowy bez przebitki
-    gap_need = 7.0 if dynamic else 12.0
     t = 3.0
-    while t < total - 3.0:
+    while gap_need and t < total - 3.0:
         if all(abs(t - x) > gap_need / 2 and abs(t - y) > gap_need / 2 for x, y in busy) and free(t, t + 3.0):
             anchor = next((v for v in v1 if v.start <= t < v.end), v1[-1])
             pc = piece_of[anchor.id]

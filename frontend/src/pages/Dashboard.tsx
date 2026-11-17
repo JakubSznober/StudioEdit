@@ -179,9 +179,9 @@ function ProjectCard({ p, active, i }: { p: ProjectSummary; active: boolean; i: 
         active ? 'border-accent/45 ring-3 ring-accent/10' : 'border-border hover:border-border-strong',
       )}
     >
-      <div className="relative h-24 overflow-hidden bg-surface-3">
+      <div className="relative h-24 overflow-hidden bg-black">
         {p.thumb ? (
-          <img src={p.thumb.startsWith('/api') || p.thumb.startsWith('http') ? p.thumb : urls.file(p.id, p.thumb)} alt="" className="h-full w-full object-cover" onError={(e) => ((e.target as HTMLImageElement).style.display = 'none')} />
+          <img src={p.thumb.startsWith('/api') || p.thumb.startsWith('http') ? p.thumb : urls.file(p.id, p.thumb)} alt="" className="h-full w-full object-contain" onError={(e) => ((e.target as HTMLImageElement).style.display = 'none')} />
         ) : (
           <div className="accent-gradient flex h-full w-full items-center justify-center opacity-80">
             <span className="text-[30px] font-bold text-white/90">{p.name.slice(0, 1).toUpperCase()}</span>
